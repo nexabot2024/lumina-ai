@@ -1,7 +1,7 @@
-import OpenAI from 'openai';
+import Groq from 'groq-sdk';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
 export interface PromptGeneratorOptions {
@@ -38,8 +38,8 @@ export async function generateImagePrompts(
     const section = sections[i];
 
     try {
-      const response = await openai.chat.completions.create({
-        model: 'gpt-4-turbo',
+      const response = await groq.chat.completions.create({
+        model: 'mixtral-8x7b-32768',
         messages: [
           {
             role: 'system',
@@ -95,8 +95,8 @@ export async function enhancePrompt(
   context: string = ''
 ): Promise<string> {
   try {
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4-turbo',
+    const response = await groq.chat.completions.create({
+      model: 'mixtral-8x7b-32768',
       messages: [
         {
           role: 'system',
