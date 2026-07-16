@@ -1,7 +1,8 @@
-import { useState } from 'react';
-import { Sparkles, Loader, Copy, Edit2 } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Sparkles, Loader, Copy, Edit2, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
+import { v4 as uuidv4 } from 'uuid';
 
 interface Prompt {
   id: string;
@@ -28,6 +29,40 @@ export default function PromptGenerator({
   const [style, setStyle] = useState('cinematic');
   const [tone, setTone] = useState('professional');
 
+  // Contar puntos en el guión para determinar número de secciones
+  const numSections = useMemo(() => {
+    if (!scriptContent.trim()) return 0;
+    const dotCount = (scriptContent.match(/\./g) || []).length;
+    return Math.max(1, dotCount);
+  }, [scriptContent]);
+
+  // Dividir guión en secciones basado en puntos
+  const scriptSections = useMemo(() => {
+    if (!scriptContent.trim() || numSections === 0) return [];
+
+    // Dividir por puntos seguidos de espacio
+    const sentences = scriptContent.split(/\.\s+/).filter(s => s.trim());
+
+    if (sentences.length <= numSections) {
+      return sentences;
+    }
+
+    // Agrupar sentencias en N secciones
+    const sectionsArray: string[] = [];
+    const sentencesPerSection = Math.ceil(sentences.length / numSections);
+
+    for (let i = 0; i < numSections; i++) {
+      const start = i * sentencesPerSection;
+      const end = Math.min(start + sentencesPerSection, sentences.length);
+      const section = sentences.slice(start, end).join('. ');
+      if (section.trim()) {
+        sectionsArray.push(section + '.');
+      }
+    }
+
+    return sectionsArray;
+  }, [scriptContent, numSections]);
+
   const handleGeneratePrompts = async () => {
     if (!scriptContent.trim()) {
       toast.error('Por favor carga un guion primero');
@@ -36,20 +71,41 @@ export default function PromptGenerator({
 
     setLoading(true);
     try {
-      const response = await axios.post('/api/prompts/parse', {
-        scriptText: scriptContent,
-        style,
-        tone,
-      });
+      // Generar prompts para cada sección
+      const newPrompts: Prompt[] = [];
 
-      onGeneratePrompts(response.data.prompts);
-      toast.success(`✨ ${response.data.prompts.length} prompts generados`);
+      for (let i = 0; i < scriptSections.length; i++) {
+        const section = scriptSections[i];
+        const response = await axios.post('/api/prompts/enhance', {
+          prompt: section,
+          context: `Esta es la sección ${i + 1} de ${scriptSections.length}. Estilo: ${style}, Tono: ${tone}`,
+        });
+
+        newPrompts.push({
+          id: uuidv4(),
+          section: i + 1,
+          text: section,
+          imagePrompt: response.data.enhanced || section,
+          videoKeywords: extractKeywords(response.data.enhanced || section),
+        });
+
+        // Pequeña pausa para no saturar el servidor
+        await new Promise(resolve => setTimeout(resolve, 200));
+      }
+
+      onGeneratePrompts(newPrompts);
+      toast.success(`✨ ${newPrompts.length} secciones de prompts generadas`);
     } catch (error) {
       toast.error('Error al generar prompts');
       console.error(error);
     } finally {
       setLoading(false);
     }
+  };
+
+  const extractKeywords = (text: string): string[] => {
+    const words = text.split(/\s+/).filter(w => w.length > 4);
+    return words.slice(0, 5).map(w => w.toLowerCase().replace(/[.,!?]/g, ''));
   };
 
   const handleCopyPrompt = (text: string) => {
@@ -79,26 +135,36 @@ export default function PromptGenerator({
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       {/* Configuration Section */}
       <div className="card-lg">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-3 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg">
-            <Sparkles className="w-6 h-6" />
+        <div className="flex items-center gap-4 mb-6">
+          <div className="p-3 bg-gradient-to-br from-purple-400 to-pink-400 rounded-2xl shadow-lg animate-float">
+            <Sparkles className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold">Generador de Prompts</h2>
-            <p className="text-gray-400 text-sm">Crea automáticamente prompts para cada sección</p>
+            <h2 className="text-3xl font-black text-gray-800">Generador de Prompts</h2>
+            <p className="text-gray-600 text-sm font-medium">Crea automáticamente prompts para cada sección del guión</p>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        {numSections > 0 && (
+          <div className="mb-6 p-4 bg-gradient-to-r from-blue-100 to-purple-100 rounded-2xl border-2 border-blue-300/50 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="font-semibold text-blue-900">Se crearán {numSections} secciones</p>
+              <p className="text-sm text-blue-800">Tu guión contiene {numSections} punto{numSections !== 1 ? 's' : ''}, por lo que se generarán {numSections} secciones de prompts</p>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
           <div>
-            <label className="block text-sm font-semibold mb-2 text-gray-200">Estilo Visual</label>
+            <label className="block text-sm font-bold mb-3 text-gray-700">🎨 Estilo Visual</label>
             <select
               value={style}
               onChange={(e) => setStyle(e.target.value)}
-              className="w-full px-4 py-2 bg-gray-900/50 border border-white/10 rounded-lg text-white focus:border-purple-500/50 focus:outline-none"
+              className="w-full px-4 py-3 bg-white border-2 border-purple-200 rounded-xl text-gray-800 font-medium focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200 transition-all"
             >
               <option value="cinematic">Cinemático</option>
               <option value="photorealistic">Fotorrealista</option>
@@ -109,11 +175,11 @@ export default function PromptGenerator({
           </div>
 
           <div>
-            <label className="block text-sm font-semibold mb-2 text-gray-200">Tono</label>
+            <label className="block text-sm font-bold mb-3 text-gray-700">🎭 Tono</label>
             <select
               value={tone}
               onChange={(e) => setTone(e.target.value)}
-              className="w-full px-4 py-2 bg-gray-900/50 border border-white/10 rounded-lg text-white focus:border-purple-500/50 focus:outline-none"
+              className="w-full px-4 py-3 bg-white border-2 border-pink-200 rounded-xl text-gray-800 font-medium focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-200 transition-all"
             >
               <option value="professional">Profesional</option>
               <option value="casual">Casual</option>
@@ -127,28 +193,30 @@ export default function PromptGenerator({
         <button
           onClick={handleGeneratePrompts}
           disabled={loading || !scriptContent.trim()}
-          className="btn-primary w-full flex items-center justify-center gap-2"
+          className="btn-primary w-full flex items-center justify-center gap-2 text-lg"
         >
-          {loading && <Loader className="w-5 h-5 animate-spin" />}
-          {loading ? 'Generando...' : 'Generar Prompts'}
+          {loading && <Loader className="w-6 h-6 animate-spin" />}
+          {loading ? 'Generando prompts para todas las secciones...' : `Generar ${numSections} Prompts`}
         </button>
       </div>
 
       {/* Generated Prompts */}
       {generatedPrompts.length > 0 && (
-        <div className="space-y-4">
+        <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <h3 className="text-lg font-semibold flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-purple-400" />
-              Prompts Generados ({generatedPrompts.length})
+            <h3 className="text-2xl font-black text-gray-800 flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-purple-400 to-pink-400 rounded-xl">
+                <Sparkles className="w-6 h-6 text-white" />
+              </div>
+              Prompts Generados ({generatedPrompts.length} secciones)
             </h3>
           </div>
 
-          <div className="grid gap-4">
+          <div className="grid gap-5">
             {generatedPrompts.map((prompt) => (
               <div
                 key={prompt.id}
-                className="card p-5 hover:border-purple-500/50"
+                className="card-gradient p-6 hover:shadow-2xl hover-lift border-2 border-purple-200/50"
               >
                 {editingId === prompt.id ? (
                   // Edit Mode
