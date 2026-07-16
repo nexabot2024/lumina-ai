@@ -9,26 +9,34 @@ const router = Router();
 
 interface GenerateAudioRequest {
   text: string;
-  voice?: string;
+  voiceId?: string;
   speed?: number;
-  language?: string;
 }
 
 interface GenerateBatchAudioRequest {
   texts: string[];
-  voice?: string;
+  voiceId?: string;
   speed?: number;
 }
 
+// Available voice IDs for AI33.pro v3:
+// elevenlabs_* - ElevenLabs voices
+// minimax_* - MiniMax voices
+// clone_* - Custom cloned voices
+// edge_* - Microsoft Edge voices
+// kokoro_* - Kokoro voices
+// vbee_* - VBee voices
+// fishaudio_* - Fish Audio voices
+
 router.post('/generate', async (req: Request<{}, {}, GenerateAudioRequest>, res: Response) => {
   try {
-    const { text, voice, speed, language } = req.body;
+    const { text, voiceId, speed } = req.body;
 
     if (!text) {
       return res.status(400).json({ error: 'text is required' });
     }
 
-    const audio = await generateAudioAI33Pro(text, { voice, speed, language });
+    const audio = await generateAudioAI33Pro(text, { voiceId, speed });
 
     res.json({
       success: true,
@@ -45,13 +53,13 @@ router.post('/generate', async (req: Request<{}, {}, GenerateAudioRequest>, res:
 
 router.post('/batch', async (req: Request<{}, {}, GenerateBatchAudioRequest>, res: Response) => {
   try {
-    const { texts, voice, speed } = req.body;
+    const { texts, voiceId, speed } = req.body;
 
     if (!Array.isArray(texts) || texts.length === 0) {
       return res.status(400).json({ error: 'texts must be a non-empty array' });
     }
 
-    const audios = await generateBatchAudio(texts, { voice, speed });
+    const audios = await generateBatchAudio(texts, { voice: voiceId, speed });
 
     res.json({
       success: true,

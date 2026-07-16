@@ -13,7 +13,7 @@ export interface GeneratedAudio {
   generatedAt: string;
 }
 
-const AI33PRO_BASE_URL = 'https://api.ai33pro.com';
+const AI33PRO_BASE_URL = process.env.AI33PRO_BASE_URL || 'https://api.ai33.pro';
 
 function getAI33ProApiKey(): string {
   const apiKey = process.env.AI33PRO_API_KEY;
@@ -26,53 +26,47 @@ function getAI33ProApiKey(): string {
 export async function generateAudioAI33Pro(
   text: string,
   options: {
-    voice?: string;
+    voiceId?: string;
     speed?: number;
-    language?: string;
   } = {}
 ): Promise<GeneratedAudio> {
   try {
     const {
-      voice = 'default',
+      voiceId = 'elevenlabs_EXAVITQu4vr4xnSDxMaL',
       speed = 1,
-      language = 'es',
     } = options;
 
+    const formData = new FormData();
+    formData.append('text', text);
+    formData.append('voice_id', voiceId);
+    formData.append('speed', speed.toString());
+    formData.append('with_transcript', 'false');
+
     const response = await axios.post(
-      `${AI33PRO_BASE_URL}/tts/generate`,
-      {
-        text,
-        voice,
-        speed,
-        language,
-      },
+      `${AI33PRO_BASE_URL}/v3/text-to-speech`,
+      formData,
       {
         headers: {
-          'Authorization': `Bearer ${getAI33ProApiKey()}`,
-          'Content-Type': 'application/json',
+          'xi-api-key': getAI33ProApiKey(),
         },
-        responseType: 'arraybuffer',
       }
     );
 
-    const audioId = uuidv4();
-    const fileName = `${audioId}.mp3`;
-    const uploadDir = process.env.UPLOAD_DIR || './uploads';
-    const localPath = join(uploadDir, 'audio', fileName);
-
-    writeFileSync(localPath, response.data);
+    if (!response.data.success || !response.data.task_id) {
+      throw new Error(`Failed to generate audio: ${response.data.error?.message || 'Unknown error'}`);
+    }
 
     return {
-      id: audioId,
-      url: `/uploads/audio/${fileName}`,
+      id: uuidv4(),
+      url: '',
       text,
-      voice,
+      voice: voiceId,
       duration: estimateDuration(text, speed),
-      localPath,
+      localPath: '',
       generatedAt: new Date().toISOString(),
     };
   } catch (error) {
-    console.error('Error generating audio with AI33Pro:', error);
+    console.error('Error generating audio with AI33Pro v3:', error);
     throw error;
   }
 }
