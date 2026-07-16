@@ -24,19 +24,37 @@ interface AudioGeneratorProps {
   scriptSections: string[];
 }
 
-type Provider = 'elevenlabs' | 'minimax' | 'fishaudio';
+type Provider = 'elevenlabs' | 'minimax' | 'fishaudio' | 'edge' | 'kokoro' | 'vbee' | 'clone';
+
+const allProviders: Array<{ id: Provider; name: string; emoji: string; color: string }> = [
+  { id: 'elevenlabs', name: 'ElevenLabs', emoji: '🎙️', color: 'from-blue-500 to-cyan-500' },
+  { id: 'minimax', name: 'MiniMax', emoji: '🎵', color: 'from-green-500 to-emerald-500' },
+  { id: 'fishaudio', name: 'FishAudio', emoji: '🐟', color: 'from-orange-500 to-amber-500' },
+  { id: 'edge', name: 'Microsoft Edge', emoji: '🌐', color: 'from-blue-400 to-blue-600' },
+  { id: 'kokoro', name: 'Kokoro', emoji: '🎭', color: 'from-purple-500 to-pink-500' },
+  { id: 'vbee', name: 'VBee', emoji: '🐝', color: 'from-yellow-500 to-orange-500' },
+  { id: 'clone', name: 'Voces Clonadas', emoji: '👤', color: 'from-indigo-500 to-purple-500' },
+];
 
 // Cache de voces en memoria
 const voiceCache: Record<Provider, Voice[] | null> = {
   elevenlabs: null,
   minimax: null,
   fishaudio: null,
+  edge: null,
+  kokoro: null,
+  vbee: null,
+  clone: null,
 };
 
 const defaultVoicesByProvider: Record<Provider, string> = {
   elevenlabs: 'elevenlabs_EXAVITQu4vr4xnSDxMaL',
   minimax: 'minimax_male-qn-qingse',
   fishaudio: 'fishaudio_default',
+  edge: 'edge_default',
+  kokoro: 'kokoro_default',
+  vbee: 'vbee_default',
+  clone: 'clone_default',
 };
 
 export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) {
@@ -91,25 +109,24 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
     loadVoicesTimeoutRef.current = setTimeout(async () => {
       setVoicesLoading(true);
       try {
-        const response = await axios.get(`/api/audio/voices/${provider}?pageSize=30`, {
+        const response = await axios.get(`/api/audio/voices/${provider}?pageSize=50`, {
           timeout: 10000,
         });
 
         if (response.data.voices && response.data.voices.length > 0) {
-          const voices = response.data.voices.slice(0, 30);
+          const voices = response.data.voices.slice(0, 50);
           voiceCache[provider] = voices;
           setAvailableVoices(voices);
           setVoice(voices[0].voice_id);
           toast.success(`✅ ${voices.length} voces cargadas de ${provider}`);
         }
       } catch (error: any) {
-        // En caso de error (429 rate limit, etc.), mantener las voces por defecto
+        // En caso de error, mantener las voces por defecto
         console.warn(`Error cargando voces de ${provider}:`, error.message);
-        // No mostrar error de toast, solo mantener los defaults
       } finally {
         setVoicesLoading(false);
       }
-    }, 500); // Retraso de 500ms para evitar rate limiting
+    }, 500);
   };
 
   const handleGenerateAudio = async (index: number) => {
@@ -206,18 +223,15 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
     toast.success('Audio eliminado');
   };
 
-  const providerColors: Record<Provider, string> = {
-    elevenlabs: 'from-blue-500 to-cyan-500',
-    minimax: 'from-green-500 to-emerald-500',
-    fishaudio: 'from-orange-500 to-amber-500',
-  };
+  const currentProvider = allProviders.find(p => p.id === provider);
+  const providerColor = currentProvider?.color || 'from-purple-600 to-pink-500';
 
   return (
     <div className="space-y-8">
       {/* Configuration Section */}
       <div className="card-lg">
         <div className="flex items-center gap-4 mb-6">
-          <div className={`p-3 bg-gradient-to-br ${providerColors[provider]} rounded-2xl shadow-lg animate-float`}>
+          <div className={`p-3 bg-gradient-to-br ${providerColor} rounded-2xl shadow-lg animate-float`}>
             <Volume2 className="w-6 h-6 text-white" />
           </div>
           <div>
@@ -226,23 +240,23 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
           </div>
         </div>
 
-        {/* Provider Selection */}
+        {/* Provider Selection - GRID COMPLETO */}
         <div className="mb-6 p-5 bg-gradient-to-r from-purple-100 to-pink-100 rounded-2xl border-2 border-purple-200/60">
           <p className="text-sm font-bold text-gray-700 mb-4">📡 Selecciona el proveedor de voces:</p>
-          <div className="grid grid-cols-3 gap-3">
-            {(['elevenlabs', 'minimax', 'fishaudio'] as Provider[]).map(p => (
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+            {allProviders.map(p => (
               <button
-                key={p}
-                onClick={() => setProvider(p)}
-                className={`p-3 rounded-xl font-bold transition-all border-2 ${
-                  provider === p
-                    ? `bg-gradient-to-r ${providerColors[p]} text-white border-transparent shadow-lg -translate-y-1`
+                key={p.id}
+                onClick={() => setProvider(p.id)}
+                className={`p-2 rounded-lg font-bold transition-all border-2 text-center text-sm ${
+                  provider === p.id
+                    ? `bg-gradient-to-r ${p.color} text-white border-transparent shadow-lg -translate-y-1`
                     : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
                 }`}
+                title={p.name}
               >
-                {p === 'elevenlabs' && '🎙️ ElevenLabs'}
-                {p === 'minimax' && '🎵 MiniMax'}
-                {p === 'fishaudio' && '🐟 FishAudio'}
+                <div>{p.emoji}</div>
+                <div className="text-xs">{p.name.split(' ')[0]}</div>
               </button>
             ))}
           </div>
@@ -310,7 +324,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
             </button>
             <button
               onClick={() => setShowCloneModal(true)}
-              title="Clonar voz con MiniMax"
+              title="Clonar voz"
               className="btn-light py-3 px-4 font-bold"
             >
               <Plus className="w-5 h-5" />
@@ -381,7 +395,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
       {filteredSections.length > 0 && (
         <div className="space-y-6">
           <h3 className="text-2xl font-black text-gray-800 flex items-center gap-3">
-            <div className={`p-2 bg-gradient-to-br ${providerColors[provider]} rounded-xl`}>
+            <div className={`p-2 bg-gradient-to-br ${providerColor} rounded-xl`}>
               <Volume2 className="w-6 h-6 text-white" />
             </div>
             Audios ({filteredSections.length} secciones)
