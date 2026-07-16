@@ -3,6 +3,17 @@ import { v4 as uuidv4 } from 'uuid';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
+// Configure FFmpeg path if it exists locally
+const ffmpegPath = process.env.FFMPEG_PATH || 'C:\\ffmpeg\\bin\\ffmpeg.exe';
+const ffprobePath = process.env.FFPROBE_PATH || 'C:\\ffmpeg\\bin\\ffprobe.exe';
+
+if (existsSync(ffmpegPath)) {
+  ffmpeg.setFfmpegPath(ffmpegPath);
+}
+if (existsSync(ffprobePath)) {
+  ffmpeg.setFfprobePath(ffprobePath);
+}
+
 export interface VideoAsset {
   type: 'image' | 'video' | 'audio';
   path: string;
