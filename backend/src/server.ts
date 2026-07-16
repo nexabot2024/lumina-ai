@@ -7,6 +7,7 @@ import promptRoutes from './routes/prompts.js';
 import imageRoutes from './routes/images.js';
 import audioRoutes from './routes/audio.js';
 import videoRoutes from './routes/videos.js';
+import compilationRoutes from './routes/compilation.js';
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use('/api/prompts', promptRoutes);
 app.use('/api/images', imageRoutes);
 app.use('/api/audio', audioRoutes);
 app.use('/api/videos', videoRoutes);
+app.use('/api/compilation', compilationRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

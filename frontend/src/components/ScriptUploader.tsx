@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { FileUp, Trash2 } from 'lucide-react';
+import { FileUp, Trash2, BookOpen } from 'lucide-react';
 import toast from 'react-hot-toast';
+import PresetsModal from './PresetsModal';
 
 interface ScriptUploaderProps {
   onScriptLoad: (content: string) => void;
@@ -12,6 +13,7 @@ export default function ScriptUploader({
   scriptContent,
 }: ScriptUploaderProps) {
   const [content, setContent] = useState(scriptContent);
+  const [presetsOpen, setPresetsOpen] = useState(false);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -95,6 +97,13 @@ export default function ScriptUploader({
           <h3 className="text-lg font-semibold">Editor de Guion</h3>
           <div className="flex gap-2">
             <button
+              onClick={() => setPresetsOpen(true)}
+              className="flex items-center gap-2 btn-secondary py-2 px-4 text-sm"
+            >
+              <BookOpen className="w-4 h-4" />
+              Presets
+            </button>
+            <button
               onClick={handleDownload}
               className="btn-secondary py-2 px-4 text-sm"
               disabled={!content}
@@ -124,6 +133,15 @@ export default function ScriptUploader({
           <p>📄 Párrafos: {content.split(/\n\s*\n+/).filter(p => p.trim()).length}</p>
         </div>
       </div>
+
+      <PresetsModal
+        isOpen={presetsOpen}
+        onClose={() => setPresetsOpen(false)}
+        onSelectPreset={(presetContent) => {
+          setContent(presetContent);
+          onScriptLoad(presetContent);
+        }}
+      />
     </div>
   );
 }

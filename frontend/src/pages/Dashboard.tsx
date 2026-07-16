@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { FileText, Image, Volume2, Video, Sparkles } from 'lucide-react';
+import { FileText, Image, Volume2, Video, Sparkles, Film } from 'lucide-react';
 import ScriptUploader from '../components/ScriptUploader';
 import PromptGenerator from '../components/PromptGenerator';
 import ImageGenerator from '../components/ImageGenerator';
 import AudioGenerator from '../components/AudioGenerator';
 import StockVideoSearch from '../components/StockVideoSearch';
+import VideoEditor from '../components/VideoEditor';
 
-type Tab = 'script' | 'prompts' | 'images' | 'audio' | 'stock';
+type Tab = 'script' | 'prompts' | 'images' | 'audio' | 'stock' | 'editor';
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('script');
@@ -19,6 +20,7 @@ export default function Dashboard() {
     { id: 'images', label: 'Imágenes', icon: <Image className="w-5 h-5" /> },
     { id: 'audio', label: 'Audio', icon: <Volume2 className="w-5 h-5" /> },
     { id: 'stock', label: 'Videos Stock', icon: <Video className="w-5 h-5" /> },
+    { id: 'editor', label: 'Editor', icon: <Film className="w-5 h-5" /> },
   ];
 
   return (
@@ -86,6 +88,12 @@ export default function Dashboard() {
         {activeTab === 'stock' && (
           <div className="animate-in fade-in duration-300">
             <StockVideoSearch />
+          </div>
+        )}
+
+        {activeTab === 'editor' && (
+          <div className="animate-in fade-in duration-300">
+            <VideoEditor />
           </div>
         )}
       </div>
