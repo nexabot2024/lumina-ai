@@ -9,10 +9,10 @@ import audioRoutes from './routes/audio.js';
 import videoRoutes from './routes/videos.js';
 import compilationRoutes from './routes/compilation.js';
 
-dotenv.config();
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+dotenv.config({ path: join(__dirname, '../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
