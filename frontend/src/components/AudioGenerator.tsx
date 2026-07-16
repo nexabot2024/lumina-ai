@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Volume2, Loader, Play, Download, Trash2, Zap, ChevronDown, Mic2, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
 
 interface GeneratedAudio {
   id: string;

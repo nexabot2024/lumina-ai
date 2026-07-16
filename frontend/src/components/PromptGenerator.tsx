@@ -2,7 +2,6 @@ import { useState, useMemo } from 'react';
 import { Sparkles, Loader, Copy, Edit2, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
-import { v4 as uuidv4 } from 'uuid';
 
 interface Prompt {
   id: string;
@@ -82,7 +81,7 @@ export default function PromptGenerator({
         });
 
         newPrompts.push({
-          id: uuidv4(),
+          id: crypto.randomUUID(),
           section: i + 1,
           text: section,
           imagePrompt: response.data.enhanced || section,
