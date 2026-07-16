@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Volume2, Loader, Play, Download, Trash2, Zap, ChevronDown, Mic2, Plus } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
@@ -26,9 +26,22 @@ interface AudioGeneratorProps {
 
 type Provider = 'elevenlabs' | 'minimax' | 'fishaudio';
 
+// Cache de voces en memoria
+const voiceCache: Record<Provider, Voice[] | null> = {
+  elevenlabs: null,
+  minimax: null,
+  fishaudio: null,
+};
+
+const defaultVoicesByProvider: Record<Provider, string> = {
+  elevenlabs: 'elevenlabs_EXAVITQu4vr4xnSDxMaL',
+  minimax: 'minimax_male-qn-qingse',
+  fishaudio: 'fishaudio_default',
+};
+
 export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) {
   const [provider, setProvider] = useState<Provider>('elevenlabs');
-  const [voice, setVoice] = useState('elevenlabs_EXAVITQu4vr4xnSDxMaL');
+  const [voice, setVoice] = useState(defaultVoicesByProvider.elevenlabs);
   const [speed, setSpeed] = useState(1);
   const [language, setLanguage] = useState('es');
   const [generatingId, setGeneratingId] = useState<number | null>(null);
@@ -39,6 +52,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
   const [clonedVoiceName, setClonedVoiceName] = useState('');
   const [cloneFile, setCloneFile] = useState<File | null>(null);
   const [cloning, setCloning] = useState(false);
+  const loadVoicesTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const filteredSections = scriptSections.filter(s => s.trim().length > 0);
 
@@ -48,22 +62,54 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
   }, [provider]);
 
   const loadVoices = async () => {
-    setVoicesLoading(true);
-    try {
-      const response = await axios.get(`/api/audio/voices/${provider}?pageSize=50`);
-      setAvailableVoices(response.data.voices.slice(0, 50));
-
-      // Establecer la primera voz como seleccionada
-      if (response.data.voices.length > 0) {
-        setVoice(response.data.voices[0].voice_id);
+    // Si ya tenemos voces en caché para este proveedor, usarlas
+    if (voiceCache[provider] && voiceCache[provider]!.length > 0) {
+      setAvailableVoices(voiceCache[provider]!);
+      if (!voice.startsWith(provider)) {
+        setVoice(voiceCache[provider]![0].voice_id);
       }
-      toast.success(`✅ ${response.data.count} voces cargadas`);
-    } catch (error) {
-      toast.error('Error al cargar voces');
-      console.error(error);
-    } finally {
-      setVoicesLoading(false);
+      return;
     }
+
+    // Usar voces por defecto mientras se cargan
+    const defaultVoices: Voice[] = [
+      {
+        voice_id: defaultVoicesByProvider[provider],
+        name: `Default ${provider}`,
+        language: 'Multi',
+        gender: 'Neutral',
+      },
+    ];
+    setAvailableVoices(defaultVoices);
+    setVoice(defaultVoicesByProvider[provider]);
+
+    // Intentar cargar voces de la API con retraso para evitar rate limiting
+    if (loadVoicesTimeoutRef.current) {
+      clearTimeout(loadVoicesTimeoutRef.current);
+    }
+
+    loadVoicesTimeoutRef.current = setTimeout(async () => {
+      setVoicesLoading(true);
+      try {
+        const response = await axios.get(`/api/audio/voices/${provider}?pageSize=30`, {
+          timeout: 10000,
+        });
+
+        if (response.data.voices && response.data.voices.length > 0) {
+          const voices = response.data.voices.slice(0, 30);
+          voiceCache[provider] = voices;
+          setAvailableVoices(voices);
+          setVoice(voices[0].voice_id);
+          toast.success(`✅ ${voices.length} voces cargadas de ${provider}`);
+        }
+      } catch (error: any) {
+        // En caso de error (429 rate limit, etc.), mantener las voces por defecto
+        console.warn(`Error cargando voces de ${provider}:`, error.message);
+        // No mostrar error de toast, solo mantener los defaults
+      } finally {
+        setVoicesLoading(false);
+      }
+    }, 500); // Retraso de 500ms para evitar rate limiting
   };
 
   const handleGenerateAudio = async (index: number) => {
