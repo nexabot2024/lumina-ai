@@ -4,9 +4,13 @@ import { writeFileSync } from 'fs';
 import { join } from 'path';
 import { v4 as uuidv4 } from 'uuid';
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+function getOpenAIClient(): OpenAI {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey || apiKey.trim() === '') {
+    throw new Error('OPENAI_API_KEY environment variable is missing or empty');
+  }
+  return new OpenAI({ apiKey });
+}
 
 export interface GeneratedImage {
   id: string;
@@ -18,7 +22,7 @@ export interface GeneratedImage {
 
 export async function generateImageDALLE(prompt: string): Promise<GeneratedImage> {
   try {
-    const response = await openai.images.generate({
+    const response = await getOpenAIClient().images.generate({
       model: 'dall-e-3',
       prompt,
       n: 1,

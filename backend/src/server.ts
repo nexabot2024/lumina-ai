@@ -1,18 +1,19 @@
-import express from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import promptRoutes from './routes/prompts.js';
-import imageRoutes from './routes/images.js';
-import audioRoutes from './routes/audio.js';
-import videoRoutes from './routes/videos.js';
-import compilationRoutes from './routes/compilation.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 dotenv.config({ path: join(__dirname, '../.env') });
+
+import express from 'express';
+import cors from 'cors';
+import promptRoutes from './routes/prompts.js';
+import imageRoutes from './routes/images.js';
+import audioRoutes from './routes/audio.js';
+import videoRoutes from './routes/videos.js';
+import compilationRoutes from './routes/compilation.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;

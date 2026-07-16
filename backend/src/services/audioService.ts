@@ -13,8 +13,15 @@ export interface GeneratedAudio {
   generatedAt: string;
 }
 
-const AI33PRO_API_KEY = process.env.AI33PRO_API_KEY;
-const AI33PRO_BASE_URL = 'https://api.ai33pro.com'; // Adjust based on actual API
+const AI33PRO_BASE_URL = 'https://api.ai33pro.com';
+
+function getAI33ProApiKey(): string {
+  const apiKey = process.env.AI33PRO_API_KEY;
+  if (!apiKey || apiKey.trim() === '') {
+    throw new Error('AI33PRO_API_KEY environment variable is missing or empty');
+  }
+  return apiKey;
+}
 
 export async function generateAudioAI33Pro(
   text: string,
@@ -41,7 +48,7 @@ export async function generateAudioAI33Pro(
       },
       {
         headers: {
-          'Authorization': `Bearer ${AI33PRO_API_KEY}`,
+          'Authorization': `Bearer ${getAI33ProApiKey()}`,
           'Content-Type': 'application/json',
         },
         responseType: 'arraybuffer',
@@ -103,7 +110,7 @@ export async function listAvailableVoices(): Promise<string[]> {
       `${AI33PRO_BASE_URL}/tts/voices`,
       {
         headers: {
-          'Authorization': `Bearer ${AI33PRO_API_KEY}`,
+          'Authorization': `Bearer ${getAI33ProApiKey()}`,
         },
       }
     );

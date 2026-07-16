@@ -1,8 +1,12 @@
 import Groq from 'groq-sdk';
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
-});
+function getGroqClient(): Groq {
+  const apiKey = process.env.GROQ_API_KEY;
+  if (!apiKey || apiKey.trim() === '') {
+    throw new Error('GROQ_API_KEY environment variable is missing or empty');
+  }
+  return new Groq({ apiKey });
+}
 
 export interface PromptGeneratorOptions {
   scriptText: string;
@@ -38,7 +42,7 @@ export async function generateImagePrompts(
     const section = sections[i];
 
     try {
-      const response = await groq.chat.completions.create({
+      const response = await getGroqClient().chat.completions.create({
         model: 'mixtral-8x7b-32768',
         messages: [
           {
@@ -95,7 +99,7 @@ export async function enhancePrompt(
   context: string = ''
 ): Promise<string> {
   try {
-    const response = await groq.chat.completions.create({
+    const response = await getGroqClient().chat.completions.create({
       model: 'mixtral-8x7b-32768',
       messages: [
         {
