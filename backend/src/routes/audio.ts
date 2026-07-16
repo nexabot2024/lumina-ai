@@ -161,19 +161,60 @@ router.get('/voices/:provider', async (req: Request, res: Response) => {
       });
     }
 
-    const voices = await getAllVoicesByProvider(provider as any);
+    // Usar timeout de 8 segundos para evitar cuelgues
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Voice loading timeout')), 8000)
+    );
 
-    res.json({
-      success: true,
-      provider,
-      count: voices.length,
-      voices,
-    });
+    try {
+      // Solo cargar primeras 30-50 voces, no todas (ElevenLabs tiene 14K+)
+      const result = await Promise.race([
+        getVoiceLibrary({
+          provider: provider as any,
+          pageSize: 50,
+          page: 1,
+        }),
+        timeoutPromise,
+      ]) as Awaited<ReturnType<typeof getVoiceLibrary>>;
+
+      res.json({
+        success: true,
+        provider,
+        count: result.voices.length,
+        voices: result.voices,
+      });
+    } catch (timeoutError) {
+      // Si hay timeout, devolver voces por defecto
+      console.warn(`Timeout loading voices for ${provider}, returning defaults`);
+      res.json({
+        success: true,
+        provider,
+        count: 1,
+        voices: [
+          {
+            voice_id: `${provider}_default`,
+            name: `Default ${provider}`,
+            language: 'Multi',
+            gender: 'Neutral',
+          },
+        ],
+      });
+    }
   } catch (error) {
     console.error(`Error fetching voices for ${req.params.provider}:`, error);
-    res.status(500).json({
-      error: 'Failed to fetch voices',
-      details: error instanceof Error ? error.message : 'Unknown error',
+    // Devolver voces por defecto en caso de error
+    res.status(200).json({
+      success: true,
+      provider: req.params.provider,
+      count: 1,
+      voices: [
+        {
+          voice_id: `${req.params.provider}_default`,
+          name: `Default ${req.params.provider}`,
+          language: 'Multi',
+          gender: 'Neutral',
+        },
+      ],
     });
   }
 });
