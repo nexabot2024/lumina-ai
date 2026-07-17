@@ -28,7 +28,7 @@ export default function App() {
               </div>
               <div>
                 <h1 className="text-4xl font-black text-gradient">
-                  AI Video Generator
+                  VidSpa
                 </h1>
                 <p className="text-sm text-gray-600 font-medium">Crea videos profesionales con IA</p>
               </div>

@@ -17,6 +17,7 @@ import {
   type DialogueSpeaker,
   type PronunciationRule,
   type VoiceLibraryFilter,
+  type Voice,
 } from '../services/audioService.js';
 
 const router = Router();
@@ -161,31 +162,29 @@ router.get('/voices/:provider', async (req: Request, res: Response) => {
       });
     }
 
-    // Usar timeout de 8 segundos para evitar cuelgues
+    // Usar timeout de 30 segundos para cargar todas las voces
     const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Voice loading timeout')), 8000)
+      setTimeout(() => reject(new Error('Voice loading timeout')), 30000)
     );
 
     try {
-      // Solo cargar primeras 30-50 voces, no todas (ElevenLabs tiene 14K+)
-      const result = await Promise.race([
-        getVoiceLibrary({
-          provider: provider as any,
-          pageSize: 50,
-          page: 1,
-        }),
+      // Cargar TODAS las voces disponibles usando paginación
+      const allVoices = await Promise.race([
+        getAllVoicesByProvider(provider as any),
         timeoutPromise,
-      ]) as Awaited<ReturnType<typeof getVoiceLibrary>>;
+      ]) as Voice[];
+
+      console.log(`✅ Loaded ${allVoices.length} voices from ${provider}`);
 
       res.json({
         success: true,
         provider,
-        count: result.voices.length,
-        voices: result.voices,
+        count: allVoices.length,
+        voices: allVoices,
       });
     } catch (timeoutError) {
       // Si hay timeout, devolver voces por defecto
-      console.warn(`Timeout loading voices for ${provider}, returning defaults`);
+      console.warn(`Timeout loading all voices for ${provider}, returning defaults`);
       res.json({
         success: true,
         provider,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Image, Loader, Download, Trash2 } from 'lucide-react';
+import { Image, Loader, Download, Trash2, Play } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 
@@ -9,6 +9,7 @@ interface GeneratedImage {
   prompt: string;
   localPath: string;
   generatedAt: string;
+  taskId?: string;
 }
 
 interface Prompt {
@@ -27,7 +28,7 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
   const [selectedPrompts, setSelectedPrompts] = useState<string[]>([]);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [images, setImages] = useState<Map<string, GeneratedImage>>(new Map());
-  const [service, setService] = useState<'dalle' | 'stable-diffusion'>('dalle');
+  const [service, setService] = useState<'veo' | 'nanobanana' | 'dalle'>('veo');
 
   const handleSelectPrompt = (id: string) => {
     setSelectedPrompts(prev =>
@@ -49,16 +50,34 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
 
     setGeneratingId(promptId);
     try {
-      const response = await axios.post('/api/images/generate', {
+      let endpoint = '/api/images/generate';
+      const payload: any = {
         prompt: prompt.imagePrompt,
-        service,
-      });
+      };
 
-      const image = response.data.image;
+      if (service === 'nanobanana') {
+        endpoint = '/api/images/generate-nanobanana';
+        payload.model = 'nano_banana_2';
+        payload.aspectRatio = '16:9';
+      } else if (service === 'veo') {
+        endpoint = '/api/images/generate';
+        payload.service = 'dalle';
+      } else {
+        payload.service = service;
+      }
+
+      const response = await axios.post(endpoint, payload);
+
+      const image = response.data.image || response.data;
       setImages(prev => new Map(prev).set(promptId, image));
-      toast.success('Imagen generada exitosamente');
+
+      if (service === 'nanobanana') {
+        toast.success('📹 Generación de video iniciada. Verifica el estado en unos minutos...');
+      } else {
+        toast.success('🎨 Imagen generada exitosamente');
+      }
     } catch (error) {
-      toast.error('Error al generar imagen');
+      toast.error('Error al generar imagen/video');
       console.error(error);
     } finally {
       setGeneratingId(null);
@@ -76,18 +95,29 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
     );
 
     try {
-      const response = await axios.post('/api/images/batch', {
+      let endpoint = '/api/images/batch';
+      const payload: any = {
         prompts: selectedPromptObjs.map(p => p.imagePrompt),
-        service,
-      });
+      };
 
-      toast.loading('Generando lote... esto puede tardar', {
-        duration: Infinity,
-      });
+      if (service === 'nanobanana') {
+        endpoint = '/api/images/batch-nanobanana';
+        payload.model = 'nano_banana_2';
+      } else {
+        payload.service = service;
+      }
 
-      toast.success(
-        `🎨 Generando ${selectedPrompts.length} imágenes en segundo plano`
-      );
+      const response = await axios.post(endpoint, payload);
+
+      if (service === 'nanobanana') {
+        toast.success(
+          `🎬 Generando ${selectedPrompts.length} videos en segundo plano. Esto puede tardar 5-10 minutos...`
+        );
+      } else {
+        toast.success(
+          `🎨 Generando ${selectedPrompts.length} imágenes en segundo plano`
+        );
+      }
     } catch (error) {
       toast.error('Error al iniciar generación en lote');
       console.error(error);
@@ -119,30 +149,31 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
       <div className="card-lg">
         <div className="flex items-center gap-3 mb-6">
           <div className="p-3 bg-gradient-to-r from-pink-500 to-purple-500 rounded-lg">
-            <Image className="w-6 h-6" />
+            <Image className="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 className="text-2xl font-bold">Generador de Imágenes</h2>
-            <p className="text-gray-400 text-sm">
-              Crea imágenes hermosas con IA
+            <h2 className="text-2xl font-bold text-gray-800">Generador de Imágenes y Videos</h2>
+            <p className="text-gray-600 text-sm">
+              Crea contenido visual con IA de última generación
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div>
-            <label className="block text-sm font-semibold mb-2">
-              Servicio de IA
+            <label className="block text-sm font-semibold mb-2 text-gray-700">
+              🎬 Servicio de IA
             </label>
             <select
               value={service}
               onChange={(e) =>
-                setService(e.target.value as 'dalle' | 'stable-diffusion')
+                setService(e.target.value as 'veo' | 'nanobanana' | 'dalle')
               }
-              className="w-full px-4 py-2 bg-gray-900/50 border border-white/10 rounded-lg text-white focus:border-purple-500/50 focus:outline-none"
+              className="w-full px-4 py-2 bg-white border-2 border-purple-200 rounded-lg text-gray-800 font-medium focus:border-purple-500 focus:outline-none"
             >
-              <option value="dalle">DALL-E 3 (Recomendado)</option>
-              <option value="stable-diffusion">Stable Diffusion</option>
+              <option value="veo">🎥 VEO (Video AI - Recomendado)</option>
+              <option value="nanobanana">🍌 NanoBanana (Generación rápida)</option>
+              <option value="dalle">🎨 DALL-E 3 (Imágenes clásicas)</option>
             </select>
           </div>
 
@@ -150,7 +181,7 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
             <div className="md:col-span-2 flex items-end gap-2">
               <button
                 onClick={handleSelectAll}
-                className="btn-secondary flex-1 py-2 text-sm"
+                className="btn-secondary flex-1 py-2 text-sm font-bold"
               >
                 {selectedPrompts.length === prompts.length
                   ? 'Deseleccionar Todo'
@@ -159,18 +190,19 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
               <button
                 onClick={handleGenerateBatch}
                 disabled={selectedPrompts.length === 0}
-                className="btn-primary flex-1 py-2 text-sm flex items-center justify-center gap-2"
+                className="btn-primary flex-1 py-2 text-sm font-bold flex items-center justify-center gap-2"
               >
-                <Image className="w-4 h-4" />
-                Generar Lote
+                {service === 'nanobanana' ? '🎬' : '🎨'}
+                Generar Lote ({selectedPrompts.length})
               </button>
             </div>
           )}
         </div>
 
         {prompts.length === 0 && (
-          <div className="text-center py-8 text-gray-400">
-            <p>📝 Crea prompts primero en la pestaña de Prompts</p>
+          <div className="text-center py-8 text-gray-600 bg-gray-100 rounded-2xl">
+            <p className="font-semibold">📝 Crea prompts primero en la pestaña de Prompts</p>
+            <p className="text-sm text-gray-500 mt-1">Una vez tengas prompts, podrás generar {service === 'nanobanana' ? 'videos' : 'imágenes'}</p>
           </div>
         )}
       </div>
@@ -178,28 +210,41 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
       {/* Prompts Grid */}
       {prompts.length > 0 && (
         <div className="space-y-4">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            <Image className="w-5 h-5 text-pink-400" />
-            Prompts Disponibles ({prompts.length})
+          <h3 className="text-lg font-semibold flex items-center gap-2 text-gray-800">
+            {service === 'nanobanana' ? '🎬' : '🖼️'} Prompts Disponibles ({prompts.length})
           </h3>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {prompts.map(prompt => {
-              const image = images.get(prompt.id);
+              const media = images.get(prompt.id);
               return (
-                <div key={prompt.id} className="card flex flex-col">
-                  {/* Image Preview */}
-                  {image ? (
-                    <div className="mb-4 -mx-6 -mt-6 mb-4">
-                      <img
-                        src={image.url}
-                        alt={image.prompt}
-                        className="w-full h-48 object-cover rounded-t-xl"
-                      />
+                <div key={prompt.id} className="card-gradient border-2 border-purple-200/50 flex flex-col hover-lift">
+                  {/* Media Preview */}
+                  {media ? (
+                    <div className="mb-4 -mx-6 -mt-6 relative">
+                      {service === 'nanobanana' && media.taskId ? (
+                        <div className="w-full h-48 bg-gradient-to-br from-purple-900/50 to-pink-900/50 rounded-t-xl flex items-center justify-center">
+                          <div className="text-center">
+                            <Loader className="w-8 h-8 text-pink-400 animate-spin mx-auto mb-2" />
+                            <p className="text-sm text-gray-400">Generando video...</p>
+                            <p className="text-xs text-gray-500">{media.taskId.substring(0, 12)}...</p>
+                          </div>
+                        </div>
+                      ) : (
+                        <img
+                          src={media.url}
+                          alt={media.prompt}
+                          className="w-full h-48 object-cover rounded-t-xl"
+                        />
+                      )}
                     </div>
                   ) : (
-                    <div className="mb-4 h-48 bg-gradient-to-br from-purple-900/50 to-pink-900/50 rounded-lg flex items-center justify-center">
-                      <Image className="w-12 h-12 text-gray-600" />
+                    <div className="mb-4 h-48 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-lg flex items-center justify-center border-2 border-dashed border-purple-300">
+                      {service === 'nanobanana' ? (
+                        <Play className="w-12 h-12 text-purple-400" />
+                      ) : (
+                        <Image className="w-12 h-12 text-purple-400" />
+                      )}
                     </div>
                   )}
 
@@ -212,22 +257,22 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
                         onChange={() => handleSelectPrompt(prompt.id)}
                         className="w-4 h-4 rounded border-gray-500 text-purple-600 cursor-pointer"
                       />
-                      <span className="text-sm font-semibold text-gray-300">
+                      <span className="text-sm font-semibold text-gray-700">
                         Sección {prompt.section}
                       </span>
                     </div>
 
-                    <p className="text-sm text-gray-400 line-clamp-2">
+                    <p className="text-sm text-gray-600 line-clamp-2">
                       {prompt.imagePrompt}
                     </p>
                   </div>
 
                   {/* Actions */}
                   <div className="flex gap-2 mt-4">
-                    {image ? (
+                    {media ? (
                       <>
                         <button
-                          onClick={() => handleDownloadImage(image)}
+                          onClick={() => handleDownloadImage(media)}
                           className="flex-1 btn-secondary py-2 text-sm flex items-center justify-center gap-1"
                         >
                           <Download className="w-4 h-4" />
@@ -235,7 +280,7 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
                         </button>
                         <button
                           onClick={() => handleDeleteImage(prompt.id)}
-                          className="flex-1 btn-secondary py-2 text-sm flex items-center justify-center gap-1 hover:bg-red-900/20 hover:border-red-600"
+                          className="flex-1 btn-secondary py-2 text-sm flex items-center justify-center gap-1 hover:bg-red-200 hover:border-red-400"
                         >
                           <Trash2 className="w-4 h-4" />
                           Eliminar
@@ -251,8 +296,8 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
                           <Loader className="w-4 h-4 animate-spin" />
                         )}
                         {generatingId === prompt.id
-                          ? 'Generando...'
-                          : 'Generar'}
+                          ? service === 'nanobanana' ? 'Generando video...' : 'Generando...'
+                          : service === 'nanobanana' ? 'Generar Video' : 'Generar'}
                       </button>
                     )}
                   </div>
