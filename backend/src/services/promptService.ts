@@ -1,11 +1,11 @@
-import Groq from 'groq-sdk';
+import Anthropic from '@anthropic-ai/sdk';
 
-function getGroqClient(): Groq {
-  const apiKey = process.env.GROQ_API_KEY;
+function getClaudeClient(): Anthropic {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey || apiKey.trim() === '') {
-    throw new Error('GROQ_API_KEY environment variable is missing or empty');
+    throw new Error('ANTHROPIC_API_KEY environment variable is missing or empty');
   }
-  return new Groq({ apiKey });
+  return new Anthropic({ apiKey });
 }
 
 export interface PromptGeneratorOptions {
@@ -25,7 +25,7 @@ export interface GeneratedPrompt {
 
 export async function parseScriptIntoSections(scriptText: string): Promise<string[]> {
   const sections = scriptText
-    .split(/\n\s*\n+/) // Divide por párrafos
+    .split(/\n\s*\n+/)
     .filter(section => section.trim().length > 0);
 
   return sections;
@@ -42,32 +42,29 @@ export async function generateImagePrompts(
     const section = sections[i];
 
     try {
-      const response = await getGroqClient().chat.completions.create({
-        model: 'openai/gpt-oss-120b',
+      const response = await getClaudeClient().messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 300,
         messages: [
           {
-            role: 'system',
-            content: `You are an expert at creating visual prompts for AI image generation.
-            Generate concise, vivid prompts for DALL-E/Midjourney that match the narrative.
-            Style: ${style}, Tone: ${tone}
-            Always respond in valid JSON format.`,
-          },
-          {
             role: 'user',
-            content: `Generate image prompt and video keywords for this script section:
-            "${section}"
+            content: `You are an expert at creating visual prompts for AI image generation.
+            Generate a concise, vivid prompt for VEO/DALL-E/Midjourney that matches this narrative.
 
-            Respond with JSON: {
-              "imagePrompt": "detailed image description",
+            Style: ${style}
+            Tone: ${tone}
+            Script section: "${section}"
+
+            Respond ONLY with valid JSON (no markdown, no extra text):
+            {
+              "imagePrompt": "detailed vivid image description for AI generation",
               "videoKeywords": ["keyword1", "keyword2", "keyword3"]
             }`,
           },
         ],
-        temperature: 0.7,
-        max_tokens: 300,
       });
 
-      const content = response.choices[0].message.content || '{}';
+      const content = response.content[0].type === 'text' ? response.content[0].text : '{}';
       const parsed = JSON.parse(content);
 
       prompts.push({
@@ -99,28 +96,24 @@ export async function enhancePrompt(
   context: string = ''
 ): Promise<string> {
   try {
-    const response = await getGroqClient().chat.completions.create({
-      model: 'llama-3-70b-versatile',
+    const response = await getClaudeClient().messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
       messages: [
         {
-          role: 'system',
-          content: `You are an expert at enhancing prompts for AI image generation.
-          Make them more detailed, specific, and visually compelling.`,
-        },
-        {
           role: 'user',
-          content: `Enhance this image prompt with more visual details:
-          "${prompt}"
+          content: `You are an expert at enhancing prompts for AI image generation.
+          Make them more detailed, specific, and visually compelling.
+
+          Image prompt: "${prompt}"
           ${context ? `Context: ${context}` : ''}
 
-          Return only the enhanced prompt, no JSON.`,
+          Return ONLY the enhanced prompt, no JSON or extra text.`,
         },
       ],
-      temperature: 0.7,
-      max_tokens: 200,
     });
 
-    return response.choices[0].message.content || prompt;
+    return response.content[0].type === 'text' ? response.content[0].text : prompt;
   } catch (error) {
     console.error('Error enhancing prompt:', error);
     return prompt;
