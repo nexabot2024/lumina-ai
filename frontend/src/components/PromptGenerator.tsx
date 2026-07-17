@@ -75,17 +75,23 @@ export default function PromptGenerator({
 
       for (let i = 0; i < scriptSections.length; i++) {
         const section = scriptSections[i];
-        const response = await axios.post('/api/prompts/enhance', {
-          prompt: section,
-          context: `Esta es la sección ${i + 1} de ${scriptSections.length}. Estilo: ${style}, Tono: ${tone}`,
+        const response = await axios.post('/api/prompts/parse', {
+          scriptText: section,
+          style: style,
+          tone: tone,
         });
+
+        // Si la API devuelve un array de prompts, tomar el primero
+        const promptData = Array.isArray(response.data.prompts)
+          ? response.data.prompts[0]
+          : response.data.prompts;
 
         newPrompts.push({
           id: crypto.randomUUID(),
           section: i + 1,
           text: section,
-          imagePrompt: response.data.enhanced || section,
-          videoKeywords: extractKeywords(response.data.enhanced || section),
+          imagePrompt: promptData?.imagePrompt || section,
+          videoKeywords: promptData?.videoKeywords || extractKeywords(section),
         });
 
         // Pequeña pausa para no saturar el servidor
@@ -319,7 +325,7 @@ export default function PromptGenerator({
                             <Copy className="w-4 h-4 text-gray-400" />
                           </button>
                         </div>
-                        <p className="text-sm text-purple-300 bg-purple-950/30 p-2 rounded border border-purple-500/20">
+                        <p className="text-sm text-white bg-purple-950/50 p-3 rounded border border-purple-500/40 leading-relaxed">
                           {prompt.imagePrompt}
                         </p>
                       </div>
