@@ -27,6 +27,8 @@ export default function PromptGenerator({
   const [editValues, setEditValues] = useState<Partial<Prompt>>({});
   const [style, setStyle] = useState('cinematic');
   const [tone, setTone] = useState('professional');
+  const [manualMode, setManualMode] = useState(false);
+  const [manualPrompts, setManualPrompts] = useState('');
 
   // Contar puntos en el guión para determinar número de secciones
   const numSections = useMemo(() => {
@@ -113,6 +115,37 @@ export default function PromptGenerator({
     return words.slice(0, 5).map(w => w.toLowerCase().replace(/[.,!?]/g, ''));
   };
 
+  const handleParseManualPrompts = () => {
+    if (!manualPrompts.trim()) {
+      toast.error('Por favor pega los prompts');
+      return;
+    }
+
+    // Parsear líneas: cada línea es un prompt
+    const lines = manualPrompts
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0);
+
+    if (lines.length === 0) {
+      toast.error('No se encontraron prompts');
+      return;
+    }
+
+    const newPrompts: Prompt[] = lines.map((line, i) => ({
+      id: crypto.randomUUID(),
+      section: i + 1,
+      text: `Sección ${i + 1}`,
+      imagePrompt: line,
+      videoKeywords: extractKeywords(line),
+    }));
+
+    onGeneratePrompts(newPrompts);
+    setManualMode(false);
+    setManualPrompts('');
+    toast.success(`✨ ${newPrompts.length} prompts cargados manualmente`);
+  };
+
   const handleCopyPrompt = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success('Copiado al portapapeles');
@@ -195,15 +228,58 @@ export default function PromptGenerator({
           </div>
         </div>
 
-        <button
-          onClick={handleGeneratePrompts}
-          disabled={loading || !scriptContent.trim()}
-          className="btn-primary w-full flex items-center justify-center gap-2 text-lg"
-        >
-          {loading && <Loader className="w-6 h-6 animate-spin" />}
-          {loading ? 'Generando prompts para todas las secciones...' : `Generar ${numSections} Prompts`}
-        </button>
+        <div className="flex gap-3">
+          <button
+            onClick={handleGeneratePrompts}
+            disabled={loading || !scriptContent.trim()}
+            className="btn-primary flex-1 flex items-center justify-center gap-2 text-lg"
+          >
+            {loading && <Loader className="w-6 h-6 animate-spin" />}
+            {loading ? 'Generando...' : `🤖 Generar ${numSections} Prompts`}
+          </button>
+          <button
+            onClick={() => setManualMode(!manualMode)}
+            className="btn-secondary px-6 flex items-center justify-center gap-2 text-lg"
+          >
+            ✏️ Manual
+          </button>
+        </div>
       </div>
+
+      {/* Manual Mode */}
+      {manualMode && (
+        <div className="card-lg">
+          <h3 className="text-2xl font-black text-gray-800 mb-4">✏️ Ingresa Prompts Manualmente</h3>
+          <p className="text-gray-600 text-sm mb-4">Pega un prompt por línea. Cada línea será una sección:</p>
+
+          <textarea
+            value={manualPrompts}
+            onChange={(e) => setManualPrompts(e.target.value)}
+            placeholder="Ultra-detailed cinematic shot of...
+Aerial drone view of...
+Macro close-up of..."
+            className="w-full h-64 p-4 bg-white border-2 border-purple-200 rounded-xl text-gray-800 font-medium focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200 mb-4 resize-none"
+          />
+
+          <div className="flex gap-3">
+            <button
+              onClick={handleParseManualPrompts}
+              className="btn-primary flex-1 py-3 text-lg font-bold flex items-center justify-center gap-2"
+            >
+              ✅ Cargar Prompts
+            </button>
+            <button
+              onClick={() => {
+                setManualMode(false);
+                setManualPrompts('');
+              }}
+              className="btn-secondary flex-1 py-3 text-lg font-bold"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Generated Prompts */}
       {generatedPrompts.length > 0 && (
