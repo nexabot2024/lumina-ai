@@ -20,9 +20,9 @@ export default function App() {
             <div className="flex items-center gap-4">
               <div className="relative group">
                 <div className="absolute inset-0 bg-gradient-vibrant rounded-xl blur opacity-60 group-hover:opacity-100 transition duration-500 group-hover:duration-200"></div>
-                <div className="relative bg-white px-3 py-2 rounded-xl shadow-lg">
+                <div className="relative bg-white px-3 py-2 rounded-xl shadow-lg overflow-hidden">
                   <div className="animate-float">
-                    <Sparkles className="w-6 h-6 text-transparent bg-gradient-to-r from-purple-600 to-pink-500 bg-clip-text" />
+                    <img src="/logo.webp" alt="VidSpa Logo" className="w-8 h-6 object-cover rounded" />
                   </div>
                 </div>
               </div>
