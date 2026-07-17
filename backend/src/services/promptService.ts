@@ -73,26 +73,74 @@ Generate ONLY valid JSON with NO markdown, NO extra text, NO commentary:
       });
 
       const content = response.content[0].type === 'text' ? response.content[0].text : '{}';
-      const parsed = JSON.parse(content);
+
+      // Limpiar markdown si Claude lo envuelve en ```json...```
+      let cleanContent = content;
+      if (content.includes('```json')) {
+        cleanContent = content.replace(/```json\n?/g, '').replace(/\n?```/g, '').trim();
+      } else if (content.includes('```')) {
+        cleanContent = content.replace(/```\n?/g, '').replace(/\n?```/g, '').trim();
+      }
+
+      const parsed = JSON.parse(cleanContent);
+
+      if (!parsed.imagePrompt || parsed.imagePrompt.trim().length < 20) {
+        throw new Error('imagePrompt es demasiado corto o vacío');
+      }
 
       prompts.push({
         id: `prompt-${i + 1}`,
         section: i + 1,
         text: section,
         prompt: section,
-        imagePrompt: parsed.imagePrompt || section,
+        imagePrompt: parsed.imagePrompt,
         videoKeywords: parsed.videoKeywords || [],
       });
     } catch (error) {
       console.error(`Error generating prompt for section ${i + 1}:`, error);
-      prompts.push({
-        id: `prompt-${i + 1}`,
-        section: i + 1,
-        text: section,
-        prompt: section,
-        imagePrompt: section,
-        videoKeywords: [],
-      });
+      // Si falla, reintenta con un prompt más simple
+      try {
+        const retryResponse = await getClaudeClient().messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          messages: [
+            {
+              role: 'user',
+              content: `Create a cinematic prompt for this text:
+"${section}"
+
+RESPOND ONLY WITH JSON, NO MARKDOWN:
+{"imagePrompt":"detailed cinematographic description with camera movement, lens, lighting, ending with: slightly uneven lighting, natural lens imperfections, real-world wear and texture","videoKeywords":["word1","word2","word3"]}`,
+            },
+          ],
+        });
+
+        const retryContent = retryResponse.content[0].type === 'text' ? retryResponse.content[0].text : '{}';
+        let retryClean = retryContent;
+        if (retryContent.includes('```')) {
+          retryClean = retryContent.replace(/```[a-z]*\n?/g, '').replace(/\n?```/g, '').trim();
+        }
+        const retryParsed = JSON.parse(retryClean);
+
+        prompts.push({
+          id: `prompt-${i + 1}`,
+          section: i + 1,
+          text: section,
+          prompt: section,
+          imagePrompt: retryParsed.imagePrompt || section,
+          videoKeywords: retryParsed.videoKeywords || [],
+        });
+      } catch (retryError) {
+        console.error(`Retry failed for section ${i + 1}:`, retryError);
+        prompts.push({
+          id: `prompt-${i + 1}`,
+          section: i + 1,
+          text: section,
+          prompt: section,
+          imagePrompt: section,
+          videoKeywords: [],
+        });
+      }
     }
   }
 

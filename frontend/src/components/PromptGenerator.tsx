@@ -330,23 +330,6 @@ export default function PromptGenerator({
                         </p>
                       </div>
 
-                      {prompt.videoKeywords.length > 0 && (
-                        <div>
-                          <p className="text-xs font-semibold text-gray-400 mb-2">
-                            PALABRAS CLAVE PARA VIDEO
-                          </p>
-                          <div className="flex flex-wrap gap-2">
-                            {prompt.videoKeywords.map((keyword, idx) => (
-                              <span
-                                key={idx}
-                                className="px-3 py-1 text-xs rounded-full bg-cyan-950/50 border border-cyan-500/30 text-cyan-300"
-                              >
-                                {keyword}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </>
                 )}
