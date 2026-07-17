@@ -44,22 +44,30 @@ export async function generateImagePrompts(
     try {
       const response = await getClaudeClient().messages.create({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 300,
+        max_tokens: 500,
         messages: [
           {
             role: 'user',
-            content: `You are an expert at creating visual prompts for AI image generation.
-            Generate a concise, vivid prompt for VEO/DALL-E/Midjourney that matches this narrative.
+            content: `You are an expert cinematic cinematographer writing ultra-detailed prompts for professional AI video/image generation (VEO, DALL-E, Midjourney).
 
-            Style: ${style}
-            Tone: ${tone}
-            Script section: "${section}"
+CRITICAL RULES:
+1. Be EXTREMELY specific and cinematographic
+2. Include camera movements (tracking, aerial, macro, dolly, zoom, etc)
+3. Specify lens types (85mm, 35mm, macro, anamorphic, etc)
+4. Describe exact lighting conditions (golden hour, harsh midday, soft morning, candlelight, etc)
+5. ALWAYS end with: "slightly uneven lighting, natural lens imperfections, real-world wear and texture"
+6. Make it feel like a professional film shot, not a still image
+7. Use cinematic language (shallow depth of field, bokeh, color grade, etc)
 
-            Respond ONLY with valid JSON (no markdown, no extra text):
-            {
-              "imagePrompt": "detailed vivid image description for AI generation",
-              "videoKeywords": ["keyword1", "keyword2", "keyword3"]
-            }`,
+Style: ${style}
+Tone: ${tone}
+Script section: "${section}"
+
+Generate ONLY valid JSON with NO markdown, NO extra text, NO commentary:
+{
+  "imagePrompt": "Ultra-detailed, cinematographic prompt describing the scene with camera movement, lens choice, lighting, and ending with the photorealism phrase",
+  "videoKeywords": ["keyword1", "keyword2", "keyword3", "keyword4"]
+}`,
           },
         ],
       });
