@@ -5,40 +5,44 @@ import {
   searchPexelsVideos,
   searchPixabayImages,
   searchPexelsImages,
+  downloadStockVideosAuto,
 } from '../services/stockService.js';
 import {
-  generateVideoVeoLite,
-  checkVideoStatus,
-  listActiveTasks,
-} from '../services/veoService.js';
+  generateVideoSnapGen,
+  checkSnapGenVideoStatus,
+  listSnapGenVideoHistory,
+  type SnapGenVideoModel,
+} from '../services/snapgenService.js';
 
 const router = Router();
 
-// ==================== VEO VIDEO GENERATION ====================
+// ==================== SNAPGEN VIDEO GENERATION ====================
 
 interface GenerateVideoRequest {
   prompt: string;
-  videoLength?: 4 | 6 | 8;
+  model?: SnapGenVideoModel;
+  duration?: 4 | 6 | 8 | 10;
   aspectRatio?: '16:9' | '9:16';
   resolution?: '720p' | '1080p';
-  mode?: 'text_to_video' | 'start_image' | 'components';
   referenceImages?: string[];
+  outputFolder?: string;
 }
 
 router.post('/generate-veo', async (req: Request<{}, {}, GenerateVideoRequest>, res: Response) => {
   try {
-    const { prompt, videoLength, aspectRatio, resolution, mode, referenceImages } = req.body;
+    const { prompt, model, duration, aspectRatio, resolution, referenceImages, outputFolder } = req.body;
 
     if (!prompt) {
       return res.status(400).json({ error: 'prompt is required' });
     }
 
-    const video = await generateVideoVeoLite(prompt, {
-      videoLength,
+    const video = await generateVideoSnapGen(prompt, {
+      model,
+      duration,
       aspectRatio,
       resolution,
-      mode,
       referenceImages,
+      outputFolder,
     });
 
     res.json({
@@ -63,7 +67,7 @@ router.get('/veo/status/:taskId', async (req: Request<{ taskId: string }>, res: 
       return res.status(400).json({ error: 'taskId is required' });
     }
 
-    const video = await checkVideoStatus(taskId);
+    const video = await checkSnapGenVideoStatus(taskId);
 
     if (!video) {
       return res.status(404).json({ error: 'Task not found' });
@@ -82,9 +86,41 @@ router.get('/veo/status/:taskId', async (req: Request<{ taskId: string }>, res: 
   }
 });
 
+router.post('/batch-veo', async (req: Request<{}, {}, { prompts: string[]; outputFolder?: string }>, res: Response) => {
+  try {
+    const { prompts, outputFolder } = req.body;
+
+    if (!Array.isArray(prompts) || prompts.length === 0) {
+      return res.status(400).json({ error: 'prompts must be a non-empty array' });
+    }
+
+    // SnapGen solo encola el trabajo y devuelve un taskId de inmediato,
+    // así que se lanzan todos en paralelo y se generan de forma concurrente.
+    const videos = await Promise.all(
+      prompts.map(async (prompt) => {
+        try {
+          return await generateVideoSnapGen(prompt, { outputFolder });
+        } catch (error) {
+          console.error(`Failed to start video generation for prompt: ${prompt}`, error);
+          return null;
+        }
+      })
+    );
+
+    res.json({
+      success: true,
+      count: videos.filter(Boolean).length,
+      videos,
+    });
+  } catch (error) {
+    console.error('Error starting batch video generation:', error);
+    res.status(500).json({ error: 'Failed to start batch video generation' });
+  }
+});
+
 router.get('/veo/tasks', async (req: Request, res: Response) => {
   try {
-    const tasks = await listActiveTasks();
+    const tasks = await listSnapGenVideoHistory();
 
     res.json({
       success: true,
@@ -143,7 +179,7 @@ router.post('/search-stock', async (req: Request<{}, {}, SearchStockRequest>, re
 
 router.post('/search-videos', async (req: Request<{}, {}, SearchVideosRequest>, res: Response) => {
   try {
-    const { query, source = 'both', limit = 5 } = req.body;
+    const { query, source = 'both', limit = 500 } = req.body;
 
     if (!query) {
       return res.status(400).json({ error: 'query is required' });
@@ -164,7 +200,7 @@ router.post('/search-videos', async (req: Request<{}, {}, SearchVideosRequest>, 
     res.json({
       success: true,
       count: videos.length,
-      videos: videos.slice(0, limit),
+      videos,
     });
   } catch (error) {
     console.error('Error searching videos:', error);
@@ -200,6 +236,54 @@ router.post('/search-images', async (req: Request<{}, {}, SearchImagesRequest>, 
   } catch (error) {
     console.error('Error searching images:', error);
     res.status(500).json({ error: 'Failed to search images' });
+  }
+});
+
+// ==================== AUTO DOWNLOAD STOCK VIDEOS ====================
+
+interface DownloadAutoRequest {
+  theme: string;
+  minDuration?: number;
+  maxDuration?: number;
+  resolution?: '720p' | '1080p' | '4k';
+  quantity?: number;
+  outputFolder: string;
+  sources?: ('pixabay' | 'pexels')[];
+}
+
+router.post('/download-auto', async (req: Request<{}, {}, DownloadAutoRequest>, res: Response) => {
+  try {
+    const { theme, minDuration, maxDuration, resolution, quantity = 3, outputFolder, sources } = req.body;
+
+    if (!theme) {
+      return res.status(400).json({ error: 'theme is required' });
+    }
+
+    if (!outputFolder) {
+      return res.status(400).json({ error: 'outputFolder is required' });
+    }
+
+    // Download sincronously and return results with real durations
+    const results = await downloadStockVideosAuto({
+      theme,
+      minDuration,
+      maxDuration,
+      resolution,
+      quantity,
+      outputFolder,
+      sources,
+    });
+
+    console.log(`✅ Downloaded ${results.length} videos for theme: ${theme}`);
+    res.json({
+      message: 'Download completed',
+      status: 'success',
+      results,
+      count: results.length,
+    });
+  } catch (error) {
+    console.error('Error downloading auto:', error);
+    res.status(500).json({ error: 'Failed to download videos', details: error instanceof Error ? error.message : 'Unknown error' });
   }
 });
 

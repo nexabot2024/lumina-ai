@@ -474,7 +474,7 @@ export async function getTaskStatus(taskId: string): Promise<any> {
     validateApiKey();
     const client = initializeClient();
 
-    const response = await client.get(`/common/task?task_id=${taskId}`);
+    const response = await client.get(`/v3/task/${taskId}`);
 
     if (!response.data.success) {
       throw new Error(`Failed to get task status: ${response.data.error?.message || 'Unknown error'}`);

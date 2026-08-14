@@ -2,6 +2,28 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Lumina AI — sistema de diseño plano dual (claro/oscuro): gris/zinc + acento violeta.
+ * Sin vidrio, sin blur, sin gradientes decorativos. Cada color usa el patrón
+ * `clase-light dark:clase-dark`. Ver tabla de equivalencias en globals.css.
+ */
+
+/* Acento de marca — valores por defecto (violeta). Ajustes → Personalización los
+   sobrescribe en :root en tiempo de ejecución (ver src/hooks/useSettings.ts). */
+:root {
+  --accent-50: 245 243 255;
+  --accent-100: 237 233 254;
+  --accent-200: 221 214 254;
+  --accent-300: 196 181 253;
+  --accent-400: 167 139 250;
+  --accent-500: 139 92 246;
+  --accent-600: 124 58 237;
+  --accent-700: 109 40 217;
+  --accent-800: 91 33 182;
+  --accent-900: 76 29 149;
+  --accent-950: 46 16 101;
+}
+
 * {
   @apply transition-colors duration-300;
 }
@@ -11,32 +33,50 @@ html {
 }
 
 body {
-  @apply bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50 text-gray-800;
+  @apply bg-gray-50 text-gray-900 font-sans;
+  @apply dark:bg-zinc-950 dark:text-zinc-100;
 }
 
-/* Gradients */
-.bg-gradient-vibrant {
-  @apply bg-gradient-to-r from-purple-600 via-pink-500 to-cyan-500;
+/* Tipografía monoespaciada para prompts, parámetros y logs */
+.font-mono-ui {
+  font-family: 'Geist Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
+/* Fondo del área raíz: gradiente lavanda suave en claro, sólido zinc-950 en oscuro (sin gradiente) */
 .bg-gradient-light {
-  @apply bg-gradient-to-br from-blue-50 via-purple-50 to-pink-50;
+  background-image: linear-gradient(
+    to bottom right,
+    #f8fafc 0%,
+    rgb(239 246 255 / 0.3) 45%,
+    rgb(var(--accent-50) / 0.2) 100%
+  );
+  @apply dark:bg-zinc-950;
 }
 
-/* Custom scrollbar */
+.dark .bg-gradient-light {
+  background-image: none;
+}
+
+/* Scrollbar global */
 ::-webkit-scrollbar {
-  @apply w-3;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-gray-200;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-gradient-to-b from-purple-400 to-pink-400 rounded-full hover:from-purple-500 hover:to-pink-500 shadow-lg;
+  background: #d4d4d8;
+  border-radius: 4px;
 }
 
-/* Animations */
+.dark ::-webkit-scrollbar-thumb {
+  background: #3f3f46;
+}
+
+/* Animations (sin implicaciones de color) */
 @keyframes gradient-shift {
   0% {
     background-position: 0% 50%;
@@ -103,59 +143,121 @@ body {
   animation: shimmer 2s infinite;
 }
 
-/* Glass morphism */
-.glass {
-  @apply bg-white/60 backdrop-blur-md border border-white/40 rounded-2xl shadow-xl hover:shadow-2xl;
+/* Entrada "materialize" al cambiar de sección */
+@keyframes materialize {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+    filter: blur(12px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
 }
 
-.glass-lg {
-  @apply bg-white/70 backdrop-blur-lg border border-white/40 rounded-3xl shadow-2xl hover:shadow-2xl;
+.animate-materialize {
+  animation: materialize 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Núcleo IA: punto que pulsa con el acento en la barra de estado inferior */
+.orb {
+  @apply rounded-full bg-accent-500;
+  animation: pulse-glow 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* === Superficies planas === */
+.glass,
+.card {
+  @apply bg-white border border-gray-200 rounded-xl;
+  @apply dark:bg-zinc-900 dark:border-zinc-800;
+}
+
+.glass-lg,
+.card-lg {
+  @apply bg-white border border-gray-200 rounded-xl p-6;
+  @apply dark:bg-zinc-900 dark:border-zinc-800;
+}
+
+.glass-modal,
 .glass-dark {
-  @apply bg-slate-900/40 backdrop-blur-md border border-white/10 rounded-2xl shadow-lg;
+  @apply bg-white border border-gray-200 rounded-xl shadow-xl;
+  @apply dark:bg-zinc-900 dark:border-zinc-800;
+}
+
+.card {
+  @apply p-6;
+}
+
+.card-gradient {
+  @apply bg-gray-50 border border-gray-200 rounded-xl p-6;
+  @apply dark:bg-zinc-950 dark:border-zinc-800;
 }
 
 /* Button styles */
 .btn-primary {
-  @apply px-6 py-3 rounded-xl font-semibold bg-gradient-to-r from-purple-600 to-pink-500 text-white hover:from-purple-700 hover:to-pink-600 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl hover:-translate-y-0.5;
+  @apply px-6 py-3 rounded-lg font-medium text-white;
+  @apply bg-accent-600 hover:bg-accent-700;
+  @apply dark:bg-accent-700 dark:hover:bg-accent-600;
+  @apply transition-colors active:scale-95;
+  @apply disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .btn-secondary {
-  @apply px-6 py-3 rounded-xl font-semibold bg-white hover:bg-gray-100 border-2 border-gray-300 text-gray-700 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg;
+  @apply px-6 py-3 rounded-lg font-medium;
+  @apply border border-gray-200 text-gray-500;
+  @apply hover:bg-gray-100 hover:text-gray-700;
+  @apply dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200;
+  @apply transition-colors active:scale-95;
+  @apply disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .btn-light {
-  @apply px-4 py-2 rounded-lg font-medium bg-gradient-to-r from-purple-200 to-pink-200 text-purple-900 hover:from-purple-300 hover:to-pink-300 transition-all shadow-sm hover:shadow-md;
+  @apply px-4 py-2 rounded-full font-medium;
+  @apply bg-accent-50 border border-accent-300 text-accent-700;
+  @apply dark:bg-accent-950/50 dark:border-accent-700 dark:text-accent-300;
+  @apply transition-colors;
 }
 
-/* Card styles */
-.card {
-  @apply glass p-6 hover:shadow-2xl transition-all duration-300;
+/* Slider (range) reutilizable */
+.input-range {
+  @apply w-full h-1 rounded-full appearance-none cursor-pointer bg-gray-200 dark:bg-zinc-700;
 }
 
-.card-lg {
-  @apply glass-lg p-8 hover:shadow-2xl transition-all duration-300;
+.input-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background: rgb(var(--accent-600));
+  cursor: pointer;
 }
 
-.card-gradient {
-  @apply glass p-6 bg-gradient-to-br from-white/80 to-purple-50/60 hover:shadow-2xl transition-all;
+.input-range::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 9999px;
+  background: rgb(var(--accent-600));
+  border: none;
+  cursor: pointer;
 }
 
 /* Text effects */
 .text-gradient {
-  @apply bg-gradient-to-r from-purple-600 via-pink-500 to-cyan-500 bg-clip-text text-transparent font-bold;
+  @apply text-accent-600 dark:text-accent-400 font-bold;
 }
 
 .text-glow {
-  text-shadow: 0 0 10px rgba(168, 85, 247, 0.5), 0 0 20px rgba(236, 72, 153, 0.3);
+  text-shadow: none;
 }
 
 /* Hover effects */
 .hover-lift {
-  @apply hover:-translate-y-1 hover:shadow-xl transition-all duration-200;
+  @apply hover:-translate-y-0.5 transition-all duration-200;
 }
 
 .hover-glow {
-  @apply hover:shadow-[0_0_20px_rgba(168,85,247,0.4)] transition-all duration-200;
+  @apply transition-all duration-200;
 }

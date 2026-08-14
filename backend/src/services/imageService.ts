@@ -30,6 +30,10 @@ export async function generateImageDALLE(prompt: string): Promise<GeneratedImage
       quality: 'hd',
     });
 
+    if (!response.data || !response.data[0]) {
+      throw new Error('No image data returned from OpenAI');
+    }
+
     const imageUrl = response.data[0].url;
     if (!imageUrl) throw new Error('No image URL returned');
 

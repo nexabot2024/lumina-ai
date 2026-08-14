@@ -1,31 +1,30 @@
 /** @type {import('tailwindcss').Config} */
 export default {
+  darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
     extend: {
-      colors: {
-        primary: {
-          50: '#f0f9ff',
-          100: '#e0f2fe',
-          500: '#0ea5e9',
-          600: '#0284c7',
-          700: '#0369a1',
-        },
-        accent: {
-          50: '#fdf2f8',
-          500: '#ec4899',
-          600: '#db2777',
-          700: '#be185d',
-        },
-        gradient: {
-          purple: '#a855f7',
-          pink: '#ec4899',
-          cyan: '#06b6d4',
-        },
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        mono: ['"Geist Mono"', 'ui-monospace', 'SFMono-Regular', 'monospace'],
       },
-      backgroundImage: {
-        'gradient-radial': 'radial-gradient(var(--tw-gradient-stops))',
-        'gradient-vibrant': 'linear-gradient(135deg, #a855f7 0%, #ec4899 50%, #06b6d4 100%)',
+      colors: {
+        // Acento de marca: lee de variables CSS en :root para poder cambiarse en
+        // vivo desde Ajustes → Personalización (ver src/hooks/useSettings.ts), sin
+        // rebuild. Los valores por defecto (violeta) están en src/styles/globals.css.
+        accent: {
+          50: 'rgb(var(--accent-50) / <alpha-value>)',
+          100: 'rgb(var(--accent-100) / <alpha-value>)',
+          200: 'rgb(var(--accent-200) / <alpha-value>)',
+          300: 'rgb(var(--accent-300) / <alpha-value>)',
+          400: 'rgb(var(--accent-400) / <alpha-value>)',
+          500: 'rgb(var(--accent-500) / <alpha-value>)',
+          600: 'rgb(var(--accent-600) / <alpha-value>)',
+          700: 'rgb(var(--accent-700) / <alpha-value>)',
+          800: 'rgb(var(--accent-800) / <alpha-value>)',
+          900: 'rgb(var(--accent-900) / <alpha-value>)',
+          950: 'rgb(var(--accent-950) / <alpha-value>)',
+        },
       },
     },
   },

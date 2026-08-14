@@ -30,13 +30,13 @@ interface AudioGeneratorProps {
 type Provider = 'elevenlabs' | 'minimax' | 'fishaudio' | 'edge' | 'kokoro' | 'vbee' | 'clone';
 
 const allProviders: Array<{ id: Provider; name: string; emoji: string; color: string }> = [
-  { id: 'elevenlabs', name: 'ElevenLabs', emoji: '🎙️', color: 'from-blue-500 to-cyan-500' },
-  { id: 'minimax', name: 'MiniMax', emoji: '🎵', color: 'from-green-500 to-emerald-500' },
-  { id: 'fishaudio', name: 'FishAudio', emoji: '🐟', color: 'from-orange-500 to-amber-500' },
-  { id: 'edge', name: 'Microsoft Edge', emoji: '🌐', color: 'from-blue-400 to-blue-600' },
-  { id: 'kokoro', name: 'Kokoro', emoji: '🎭', color: 'from-purple-500 to-pink-500' },
-  { id: 'vbee', name: 'VBee', emoji: '🐝', color: 'from-yellow-500 to-orange-500' },
-  { id: 'clone', name: 'Voces Clonadas', emoji: '👤', color: 'from-indigo-500 to-purple-500' },
+  { id: 'elevenlabs', name: 'ElevenLabs', emoji: '🎙️', color: 'bg-accent-600' },
+  { id: 'minimax', name: 'MiniMax', emoji: '🎵', color: 'bg-emerald-600' },
+  { id: 'fishaudio', name: 'FishAudio', emoji: '🐟', color: 'bg-accent-600' },
+  { id: 'edge', name: 'Microsoft Edge', emoji: '🌐', color: 'bg-accent-600' },
+  { id: 'kokoro', name: 'Kokoro', emoji: '🎭', color: 'bg-accent-600' },
+  { id: 'vbee', name: 'VBee', emoji: '🐝', color: 'bg-accent-600' },
+  { id: 'clone', name: 'Voces Clonadas', emoji: '👤', color: 'bg-accent-600' },
 ];
 
 const voiceCache: Record<Provider, Voice[] | null> = {
@@ -78,6 +78,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
   const [language, setLanguage] = useState('es');
   const [generatingId, setGeneratingId] = useState<number | null>(null);
   const [audios, setAudios] = useState<Map<number, GeneratedAudio>>(new Map());
+  const [audioReady, setAudioReady] = useState<Map<number, boolean>>(new Map());
   const [availableVoices, setAvailableVoices] = useState<Voice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
   const [voicesProgress, setVoicesProgress] = useState('Cargando voces...');
@@ -145,6 +146,38 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
     }, 500);
   };
 
+  const pollAudioReady = (index: number, taskId: string) => {
+    setAudioReady(prev => new Map(prev).set(index, false));
+
+    let attempts = 0;
+    const maxAttempts = 40; // ~2 minutos
+
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const response = await axios.get(`/api/audio/task/${taskId}`);
+        const status = response.data.status?.status;
+
+        if (status === 'done') {
+          clearInterval(interval);
+          setAudioReady(prev => new Map(prev).set(index, true));
+          toast.success(`🔊 Audio listo para reproducir`);
+        } else if (status === 'failed' || status === 'error') {
+          clearInterval(interval);
+          toast.error('La generación de audio falló');
+        } else if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          toast.error('El audio está tardando demasiado en procesarse');
+        }
+      } catch (error) {
+        if (attempts >= maxAttempts) {
+          clearInterval(interval);
+          console.error('Error comprobando estado del audio:', error);
+        }
+      }
+    }, 3000);
+  };
+
   const handleGenerateAudio = async (index: number) => {
     const section = filteredSections[index];
     if (!section) return;
@@ -159,7 +192,8 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
 
       const audio = response.data.audio;
       setAudios(prev => new Map(prev).set(index, audio));
-      toast.success(`✨ Audio generado - Task: ${audio.taskId.substring(0, 8)}...`);
+      toast.success(`✨ Generando audio... esto puede tardar unos segundos`);
+      pollAudioReady(index, audio.taskId);
     } catch (error) {
       toast.error('Error al generar audio');
       console.error(error);
@@ -186,10 +220,11 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
       const newAudios = new Map(audios);
       batchAudios.forEach((audio: GeneratedAudio, idx: number) => {
         newAudios.set(idx, audio);
+        pollAudioReady(idx, audio.taskId);
       });
       setAudios(newAudios);
 
-      toast.success(`✨ ${batchAudios.length} audios generados`);
+      toast.success(`✨ Generando ${batchAudios.length} audios... esto puede tardar unos segundos`);
     } catch (error) {
       toast.error('Error al generar lote de audios');
       console.error(error);
@@ -236,7 +271,41 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
       newMap.delete(index);
       return newMap;
     });
+    setAudioReady(prev => {
+      const newMap = new Map(prev);
+      newMap.delete(index);
+      return newMap;
+    });
     toast.success('Audio eliminado');
+  };
+
+  const handlePlayAudio = (taskId: string) => {
+    const audioElement = new Audio(`/api/audio/file/${taskId}`);
+    audioElement.play().catch(error => {
+      toast.error('El audio todavía no está listo, intenta de nuevo en unos segundos');
+      console.error(error);
+    });
+  };
+
+  const handleDownloadAudio = async (taskId: string, index: number) => {
+    try {
+      const response = await axios.get(`/api/audio/file/${taskId}`, {
+        responseType: 'blob',
+      });
+
+      const url = window.URL.createObjectURL(response.data);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audio_section_${index + 1}.mp3`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      toast.success('Descarga iniciada');
+    } catch (error) {
+      toast.error('Error al descargar audio');
+      console.error(error);
+    }
   };
 
   const handleSelectVoice = (voiceId: string) => {
@@ -255,34 +324,34 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
   };
 
   const currentProvider = allProviders.find(p => p.id === provider);
-  const providerColor = currentProvider?.color || 'from-purple-600 to-pink-500';
+  const providerColor = currentProvider?.color || 'bg-accent-600';
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Configuration Section */}
       <div className="card-lg">
-        <div className="flex items-center gap-4 mb-6">
-          <div className={`p-3 bg-gradient-to-br ${providerColor} rounded-2xl shadow-lg animate-float`}>
-            <Volume2 className="w-6 h-6 text-white" />
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2.5 bg-accent-600 rounded-lg">
+            <Volume2 className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-3xl font-black text-gray-800">Generador de Audio</h2>
-            <p className="text-gray-600 text-sm font-medium">Crea voces profesionales con IA</p>
+            <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Generador de Audio</h2>
+            <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Crea voces profesionales con IA</p>
           </div>
         </div>
 
         {/* Provider Selection */}
-        <div className="mb-6 p-5 bg-gradient-to-r from-purple-100 to-pink-100 rounded-2xl border-2 border-purple-200/60">
-          <p className="text-sm font-bold text-gray-700 mb-4">📡 Selecciona el proveedor de voces:</p>
+        <div className="mb-6 p-4 bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800">
+          <p className="text-gray-500 dark:text-zinc-400 text-xs font-medium mb-3">📡 Selecciona el proveedor de voces:</p>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
             {allProviders.map(p => (
               <button
                 key={p.id}
                 onClick={() => setProvider(p.id)}
-                className={`p-2 rounded-lg font-bold transition-all border-2 text-center text-sm ${
+                className={`p-2 rounded-lg font-medium transition-all border text-center text-sm ${
                   provider === p.id
-                    ? `bg-gradient-to-r ${p.color} text-white border-transparent shadow-lg -translate-y-1`
-                    : 'bg-white text-gray-700 border-gray-300 hover:border-gray-400'
+                    ? `${p.color} text-white border-transparent`
+                    : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300 dark:bg-zinc-900 dark:text-zinc-300 dark:border-zinc-800 dark:hover:border-zinc-600'
                 }`}
                 title={p.name}
               >
@@ -294,19 +363,19 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
         </div>
 
         {/* Voice Configuration Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5 mb-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div>
-            <label className="block text-sm font-bold mb-3 text-gray-700">🎤 Voz Actual</label>
-            <div className="p-3 bg-gradient-to-r from-blue-100 to-cyan-100 border-2 border-blue-300 rounded-xl">
-              <p className="text-sm font-bold text-gray-800 truncate">
+            <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">🎤 Voz Actual</label>
+            <div className="p-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg">
+              <p className="text-sm font-medium text-gray-900 dark:text-zinc-100 truncate">
                 {availableVoices.find(v => v.voice_id === voice)?.name || 'Default'}
               </p>
-              <p className="text-xs text-gray-600 truncate">{voice}</p>
+              <p className="text-xs text-gray-400 dark:text-zinc-600 truncate">{voice}</p>
             </div>
           </div>
 
           <div>
-            <label className="block text-sm font-bold mb-3 text-gray-700">
+            <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">
               ⚡ Velocidad: {speed.toFixed(1)}x
             </label>
             <input
@@ -316,16 +385,16 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
               step="0.1"
               value={speed}
               onChange={(e) => setSpeed(parseFloat(e.target.value))}
-              className="w-full h-3 bg-gradient-to-r from-green-300 to-emerald-300 rounded-full appearance-none cursor-pointer accent-green-600"
+              className="input-range"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-bold mb-3 text-gray-700">🌐 Idioma</label>
+            <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">🌐 Idioma</label>
             <select
               value={language}
               onChange={(e) => setLanguage(e.target.value)}
-              className="w-full px-4 py-3 bg-white border-2 border-blue-200 rounded-xl text-gray-800 font-medium focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-200 transition-all"
+              className="w-full px-4 py-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
             >
               <option value="es">🇪🇸 Español</option>
               <option value="en">🇬🇧 Inglés</option>
@@ -340,7 +409,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
           <button
             onClick={handleGenerateBatchAudio}
             disabled={filteredSections.length === 0}
-            className="btn-primary py-3 text-sm font-bold flex items-center justify-center gap-2 h-fit"
+            className="btn-primary py-3 text-sm flex items-center justify-center gap-2 h-fit"
           >
             <Zap className="w-4 h-4" />
             Generar Todo
@@ -349,7 +418,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
           <div className="flex gap-2 items-end">
             <button
               onClick={() => setShowVoiceSelector(!showVoiceSelector)}
-              className="flex-1 btn-secondary py-3 text-sm font-bold flex items-center justify-center gap-2"
+              className="flex-1 btn-secondary py-3 text-sm flex items-center justify-center gap-2"
             >
               🎙️ Seleccionar Voz ({availableVoices.length})
               {voicesLoading && <Loader className="w-4 h-4 animate-spin" />}
@@ -357,7 +426,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
             <button
               onClick={() => setShowCloneModal(true)}
               title="Clonar voz"
-              className="btn-light py-3 px-4 font-bold"
+              className="btn-light py-3 px-4"
             >
               <Plus className="w-5 h-5" />
             </button>
@@ -366,13 +435,13 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
 
         {/* Voice Selector Subsection */}
         {showVoiceSelector && (
-          <div className="mb-6 p-6 bg-gradient-to-br from-indigo-100 to-purple-100 border-2 border-purple-300 rounded-2xl">
+          <div className="mb-6 p-5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl">
             <div className="flex items-center justify-between mb-5">
-              <h3 className="text-xl font-black text-gray-800">🗣️ Selector de Voces</h3>
+              <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">🗣️ Selector de Voces</h3>
               {voicesLoading && (
                 <div className="flex items-center gap-2">
-                  <Loader className="w-5 h-5 animate-spin text-purple-600" />
-                  <span className="text-sm font-bold text-purple-600">{voicesProgress}</span>
+                  <Loader className="w-4 h-4 animate-spin text-accent-600" />
+                  <span className="text-xs font-medium text-accent-600 dark:text-accent-400">{voicesProgress}</span>
                 </div>
               )}
             </div>
@@ -380,11 +449,11 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
             {/* Filtros */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <div>
-                <label className="block text-sm font-bold mb-2 text-gray-700">👥 Género</label>
+                <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">👥 Género</label>
                 <select
                   value={filterGender}
                   onChange={(e) => setFilterGender(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border-2 border-purple-200 rounded-lg text-gray-800 font-medium focus:border-purple-500 focus:outline-none text-sm"
+                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
                 >
                   <option value="">Todos</option>
                   {VOICE_GENDERS.map(g => (
@@ -393,11 +462,11 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-bold mb-2 text-gray-700">🎂 Edad</label>
+                <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">🎂 Edad</label>
                 <select
                   value={filterAge}
                   onChange={(e) => setFilterAge(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border-2 border-purple-200 rounded-lg text-gray-800 font-medium focus:border-purple-500 focus:outline-none text-sm"
+                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
                 >
                   <option value="">Todas</option>
                   {VOICE_AGES.map(a => (
@@ -406,11 +475,11 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-bold mb-2 text-gray-700">📂 Categoría</label>
+                <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">📂 Categoría</label>
                 <select
                   value={filterCategory}
                   onChange={(e) => setFilterCategory(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border-2 border-purple-200 rounded-lg text-gray-800 font-medium focus:border-purple-500 focus:outline-none text-sm"
+                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
                 >
                   <option value="">Todas</option>
                   {VOICE_CATEGORIES.map(c => (
@@ -426,30 +495,30 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                 getFilteredVoices().map(v => (
                   <div
                     key={v.voice_id}
-                    className={`p-4 rounded-xl border-2 transition-all cursor-pointer ${
+                    className={`p-4 rounded-lg border transition-all cursor-pointer ${
                       voice === v.voice_id
-                        ? 'bg-gradient-to-r from-purple-500 to-pink-500 border-purple-600 text-white shadow-lg'
-                        : 'bg-white border-gray-300 hover:border-purple-400'
+                        ? 'bg-accent-50 dark:bg-accent-950/50 border-accent-300 dark:border-accent-700 text-accent-700 dark:text-accent-300'
+                        : 'bg-white border-gray-200 hover:border-gray-300 dark:bg-zinc-900 dark:border-zinc-800 dark:hover:border-zinc-600'
                     }`}
                   >
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1">
-                        <p className="font-bold text-sm">{v.name}</p>
-                        <p className="text-xs opacity-70">{v.voice_id}</p>
+                        <p className={`font-medium text-sm ${voice === v.voice_id ? '' : 'text-gray-900 dark:text-zinc-100'}`}>{v.name}</p>
+                        <p className={`text-xs ${voice === v.voice_id ? 'opacity-70' : 'text-gray-400 dark:text-zinc-600'}`}>{v.voice_id}</p>
                       </div>
                       {voice === v.voice_id && <Check className="w-5 h-5" />}
                     </div>
-                    <div className="text-xs opacity-80 space-y-1 mb-3">
+                    <div className={`text-xs space-y-1 mb-3 ${voice === v.voice_id ? 'opacity-80' : 'text-gray-500 dark:text-zinc-400'}`}>
                       {v.gender && <p>👥 {v.gender}</p>}
                       {v.age && <p>🎂 {v.age}</p>}
                       {v.category && <p>📂 {v.category}</p>}
                     </div>
                     <button
                       onClick={() => handleSelectVoice(v.voice_id)}
-                      className={`w-full py-2 rounded-lg font-bold text-sm transition-all ${
+                      className={`w-full py-2 rounded-lg font-medium text-sm transition-all ${
                         voice === v.voice_id
-                          ? 'bg-white text-purple-600 hover:bg-gray-100'
-                          : 'bg-gradient-to-r from-purple-500 to-pink-500 text-white hover:from-purple-600 hover:to-pink-600'
+                          ? 'bg-accent-600 text-white hover:bg-accent-700'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700'
                       }`}
                     >
                       {voice === v.voice_id ? '✓ Seleccionada' : 'Usar'}
@@ -457,8 +526,8 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                   </div>
                 ))
               ) : (
-                <div className="col-span-3 text-center py-8 text-gray-600">
-                  <p className="font-semibold">No hay voces que coincidan con los filtros</p>
+                <div className="col-span-3 text-center py-8 text-gray-500 dark:text-zinc-400">
+                  <p className="font-medium text-sm">No hay voces que coincidan con los filtros</p>
                 </div>
               )}
             </div>
@@ -466,8 +535,8 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
         )}
 
         {filteredSections.length === 0 && (
-          <div className="text-center py-8 text-gray-600 bg-gray-100 rounded-2xl">
-            <p className="font-semibold">📝 Sube un guion primero para generar audio</p>
+          <div className="text-center py-8 text-gray-500 dark:text-zinc-400 bg-gray-50 dark:bg-zinc-950 rounded-lg">
+            <p className="font-medium text-sm">📝 Sube un guion primero para generar audio</p>
           </div>
         )}
       </div>
@@ -477,29 +546,29 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card-lg max-w-md w-full">
             <div className="flex items-center gap-3 mb-5">
-              <Mic2 className="w-6 h-6 text-purple-600" />
-              <h3 className="text-2xl font-bold text-gray-800">Clonar Voz</h3>
+              <Mic2 className="w-5 h-5 text-accent-600" />
+              <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Clonar Voz</h3>
             </div>
 
             <div className="space-y-4 mb-6">
               <div>
-                <label className="block text-sm font-bold mb-2 text-gray-700">Nombre de la voz</label>
+                <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">Nombre de la voz</label>
                 <input
                   type="text"
                   value={clonedVoiceName}
                   onChange={(e) => setClonedVoiceName(e.target.value)}
                   placeholder="Ej: Mi voz personalizada"
-                  className="w-full px-4 py-2 bg-white border-2 border-purple-200 rounded-xl text-gray-800 focus:border-purple-500 focus:outline-none"
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-600 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-bold mb-2 text-gray-700">Archivo de audio (MP3/WAV)</label>
+                <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">Archivo de audio (MP3/WAV)</label>
                 <input
                   type="file"
                   accept="audio/*"
                   onChange={(e) => setCloneFile(e.target.files?.[0] || null)}
-                  className="w-full px-4 py-2 bg-white border-2 border-purple-200 rounded-xl text-gray-800"
+                  className="w-full px-4 py-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100 rounded-lg"
                 />
               </div>
             </div>
@@ -508,14 +577,14 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
               <button
                 onClick={handleCloneVoice}
                 disabled={cloning || !clonedVoiceName || !cloneFile}
-                className="btn-primary flex-1 py-2 text-sm font-bold flex items-center justify-center gap-2"
+                className="btn-primary flex-1 py-2 text-sm flex items-center justify-center gap-2"
               >
                 {cloning && <Loader className="w-4 h-4 animate-spin" />}
                 {cloning ? 'Clonando...' : 'Clonar Voz'}
               </button>
               <button
                 onClick={() => setShowCloneModal(false)}
-                className="btn-secondary flex-1 py-2 text-sm font-bold"
+                className="btn-secondary flex-1 py-2 text-sm"
               >
                 Cancelar
               </button>
@@ -526,46 +595,59 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
 
       {/* Audio Sections Grid */}
       {filteredSections.length > 0 && (
-        <div className="space-y-6">
-          <h3 className="text-2xl font-black text-gray-800 flex items-center gap-3">
-            <div className={`p-2 bg-gradient-to-br ${providerColor} rounded-xl`}>
-              <Volume2 className="w-6 h-6 text-white" />
+        <div className="space-y-4">
+          <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium flex items-center gap-3">
+            <div className="p-2 bg-accent-600 rounded-lg">
+              <Volume2 className="w-5 h-5 text-white" />
             </div>
             Audios ({filteredSections.length} secciones)
           </h3>
 
-          <div className="space-y-5">
+          <div className="space-y-4">
             {filteredSections.map((section, index) => {
               const audio = audios.get(index);
               return (
-                <div key={index} className="card-gradient border-2 border-green-200/50 hover-lift">
+                <div key={index} className="card">
                   <div className="flex items-start justify-between mb-4">
                     <div className="flex-1">
-                      <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-emerald-500 text-white text-sm font-bold mb-3 shadow-lg">
+                      <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-accent-600 text-white text-sm font-medium mb-3">
                         {index + 1}
                       </span>
-                      <p className="text-sm font-bold text-gray-700 line-clamp-2">
+                      <p className="text-sm font-medium text-gray-700 dark:text-zinc-300 line-clamp-2">
                         {section.substring(0, 100)}
                         {section.length > 100 ? '...' : ''}
                       </p>
                     </div>
                   </div>
 
-                  <div className="bg-gradient-to-br from-gray-100 to-gray-50 p-4 rounded-xl mb-4 border border-gray-300">
-                    <p className="text-sm text-gray-700 line-clamp-3">{section}</p>
+                  <div className="bg-gray-50 dark:bg-zinc-950 p-4 rounded-lg mb-4 border border-gray-200 dark:border-zinc-800">
+                    <p className="text-sm text-gray-700 dark:text-zinc-300 line-clamp-3">{section}</p>
                   </div>
 
                   {audio && (
-                    <div className="mb-4 p-4 bg-gradient-to-r from-green-50 to-emerald-50 border-2 border-green-300 rounded-xl">
+                    <div className={`mb-4 p-4 rounded-lg border ${
+                      audioReady.get(index)
+                        ? 'bg-emerald-50 dark:bg-emerald-950 border-emerald-200 dark:border-emerald-800'
+                        : 'bg-amber-50 dark:bg-amber-950 border-amber-200 dark:border-amber-800'
+                    }`}>
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-sm font-bold text-green-700">
-                          ✓ Audio Generado
+                        <p className={`text-sm font-medium ${audioReady.get(index) ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-700 dark:text-amber-400'}`}>
+                          {audioReady.get(index) ? (
+                            '✓ Audio Generado'
+                          ) : (
+                            <span className="flex items-center gap-2">
+                              <Loader className="w-4 h-4 animate-spin" />
+                              Procesando audio...
+                            </span>
+                          )}
                         </p>
-                        <p className="text-xs font-bold text-green-600 bg-white px-3 py-1 rounded-full">
+                        <p className={`text-xs font-medium bg-white dark:bg-zinc-900 px-3 py-1 rounded-full ${audioReady.get(index) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
                           {audio.taskId.substring(0, 8)}...
                         </p>
                       </div>
-                      <audio controls className="w-full rounded-lg" src={audio.taskId} />
+                      {audioReady.get(index) && (
+                        <audio controls className="w-full rounded-lg" src={`/api/audio/file/${audio.taskId}`} />
+                      )}
                     </div>
                   )}
 
@@ -573,19 +655,23 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                     {audio ? (
                       <>
                         <button
-                          className="flex-1 btn-light py-2 text-sm font-bold flex items-center justify-center gap-2"
+                          onClick={() => handlePlayAudio(audio.taskId)}
+                          disabled={!audioReady.get(index)}
+                          className="flex-1 btn-light py-2 text-sm flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Play className="w-4 h-4" />
                           Reproducir
                         </button>
                         <button
-                          className="btn-light py-2 px-4 text-sm font-bold flex items-center justify-center gap-1"
+                          onClick={() => handleDownloadAudio(audio.taskId, index)}
+                          disabled={!audioReady.get(index)}
+                          className="btn-light py-2 px-4 text-sm flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Download className="w-4 h-4" />
                         </button>
                         <button
                           onClick={() => handleDeleteAudio(index)}
-                          className="btn-light py-2 px-4 text-sm font-bold flex items-center justify-center gap-1 hover:bg-red-200 hover:border-red-400"
+                          className="btn-light py-2 px-4 text-sm flex items-center justify-center gap-1 hover:bg-red-50 hover:border-red-300 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:border-red-800 dark:hover:text-red-400"
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -594,7 +680,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                       <button
                         onClick={() => handleGenerateAudio(index)}
                         disabled={generatingId === index}
-                        className="flex-1 btn-primary py-2 text-sm font-bold flex items-center justify-center gap-2"
+                        className="flex-1 btn-primary py-2 text-sm flex items-center justify-center gap-2"
                       >
                         {generatingId === index && (
                           <Loader className="w-4 h-4 animate-spin" />

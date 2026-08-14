@@ -31,24 +31,38 @@ export async function parseScriptIntoSections(scriptText: string): Promise<strin
   return sections;
 }
 
-export async function generateImagePrompts(
-  sections: string[],
-  options: { style?: string; tone?: string } = {}
-): Promise<GeneratedPrompt[]> {
-  const prompts: GeneratedPrompt[] = [];
-  const { style = 'cinematic', tone = 'professional' } = options;
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-  for (let i = 0; i < sections.length; i++) {
-    const section = sections[i];
+function isRetryableError(error: unknown): boolean {
+  const status = (error as any)?.status;
+  return status === 429 || status === 529 || status === 503;
+}
 
-    try {
-      const response = await getClaudeClient().messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 500,
-        messages: [
-          {
-            role: 'user',
-            content: `You are an expert cinematic cinematographer writing ultra-detailed prompts for professional AI video/image generation (VEO, DALL-E, Midjourney).
+function cleanJsonResponse(content: string): string {
+  if (content.includes('```json')) {
+    return content.replace(/```json\n?/g, '').replace(/\n?```/g, '').trim();
+  }
+  if (content.includes('```')) {
+    return content.replace(/```[a-z]*\n?/g, '').replace(/\n?```/g, '').trim();
+  }
+  return content;
+}
+
+async function callClaudeForImagePrompt(
+  section: string,
+  style: string,
+  tone: string,
+  simplified: boolean
+): Promise<{ imagePrompt: string; videoKeywords: string[] }> {
+  const content = simplified
+    ? `Create a cinematic prompt for this text:
+"${section}"
+
+RESPOND ONLY WITH JSON, NO MARKDOWN:
+{"imagePrompt":"detailed cinematographic description with camera movement, lens, lighting, ending with: slightly uneven lighting, natural lens imperfections, real-world wear and texture","videoKeywords":["word1","word2","word3"]}`
+    : `You are an expert cinematic cinematographer writing ultra-detailed prompts for professional AI video/image generation (VEO, DALL-E, Midjourney).
 
 CRITICAL RULES:
 1. Be EXTREMELY specific and cinematographic
@@ -67,80 +81,68 @@ Generate ONLY valid JSON with NO markdown, NO extra text, NO commentary:
 {
   "imagePrompt": "Ultra-detailed, cinematographic prompt describing the scene with camera movement, lens choice, lighting, and ending with the photorealism phrase",
   "videoKeywords": ["keyword1", "keyword2", "keyword3", "keyword4"]
-}`,
-          },
-        ],
-      });
+}`;
 
-      const content = response.content[0].type === 'text' ? response.content[0].text : '{}';
+  const response = await getClaudeClient().messages.create({
+    model: 'claude-haiku-4-5-20251001',
+    max_tokens: simplified ? 400 : 500,
+    messages: [{ role: 'user', content }],
+  });
 
-      // Limpiar markdown si Claude lo envuelve en ```json...```
-      let cleanContent = content;
-      if (content.includes('```json')) {
-        cleanContent = content.replace(/```json\n?/g, '').replace(/\n?```/g, '').trim();
-      } else if (content.includes('```')) {
-        cleanContent = content.replace(/```\n?/g, '').replace(/\n?```/g, '').trim();
+  const rawText = response.content[0].type === 'text' ? response.content[0].text : '{}';
+  const parsed = JSON.parse(cleanJsonResponse(rawText));
+
+  if (!parsed.imagePrompt || parsed.imagePrompt.trim().length < 20) {
+    throw new Error('imagePrompt es demasiado corto o vacío');
+  }
+
+  return { imagePrompt: parsed.imagePrompt, videoKeywords: parsed.videoKeywords || [] };
+}
+
+export async function generateImagePrompts(
+  sections: string[],
+  options: { style?: string; tone?: string } = {}
+): Promise<GeneratedPrompt[]> {
+  const prompts: GeneratedPrompt[] = [];
+  const { style = 'cinematic', tone = 'professional' } = options;
+  const maxAttempts = 3;
+
+  for (let i = 0; i < sections.length; i++) {
+    const section = sections[i];
+    let result: { imagePrompt: string; videoKeywords: string[] } | null = null;
+    let lastError: unknown = null;
+
+    for (let attempt = 0; attempt < maxAttempts && !result; attempt++) {
+      try {
+        result = await callClaudeForImagePrompt(section, style, tone, attempt > 0);
+      } catch (error) {
+        lastError = error;
+        console.error(`Intento ${attempt + 1}/${maxAttempts} fallido para sección ${i + 1}:`, error);
+        if (isRetryableError(error) && attempt < maxAttempts - 1) {
+          await sleep(1000 * Math.pow(2, attempt)); // 1s, 2s
+        }
       }
+    }
 
-      const parsed = JSON.parse(cleanContent);
-
-      if (!parsed.imagePrompt || parsed.imagePrompt.trim().length < 20) {
-        throw new Error('imagePrompt es demasiado corto o vacío');
-      }
-
+    if (result) {
       prompts.push({
         id: `prompt-${i + 1}`,
         section: i + 1,
         text: section,
         prompt: section,
-        imagePrompt: parsed.imagePrompt,
-        videoKeywords: parsed.videoKeywords || [],
+        imagePrompt: result.imagePrompt,
+        videoKeywords: result.videoKeywords,
       });
-    } catch (error) {
-      console.error(`Error generating prompt for section ${i + 1}:`, error);
-      // Si falla, reintenta con un prompt más simple
-      try {
-        const retryResponse = await getClaudeClient().messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 400,
-          messages: [
-            {
-              role: 'user',
-              content: `Create a cinematic prompt for this text:
-"${section}"
-
-RESPOND ONLY WITH JSON, NO MARKDOWN:
-{"imagePrompt":"detailed cinematographic description with camera movement, lens, lighting, ending with: slightly uneven lighting, natural lens imperfections, real-world wear and texture","videoKeywords":["word1","word2","word3"]}`,
-            },
-          ],
-        });
-
-        const retryContent = retryResponse.content[0].type === 'text' ? retryResponse.content[0].text : '{}';
-        let retryClean = retryContent;
-        if (retryContent.includes('```')) {
-          retryClean = retryContent.replace(/```[a-z]*\n?/g, '').replace(/\n?```/g, '').trim();
-        }
-        const retryParsed = JSON.parse(retryClean);
-
-        prompts.push({
-          id: `prompt-${i + 1}`,
-          section: i + 1,
-          text: section,
-          prompt: section,
-          imagePrompt: retryParsed.imagePrompt || section,
-          videoKeywords: retryParsed.videoKeywords || [],
-        });
-      } catch (retryError) {
-        console.error(`Retry failed for section ${i + 1}:`, retryError);
-        prompts.push({
-          id: `prompt-${i + 1}`,
-          section: i + 1,
-          text: section,
-          prompt: section,
-          imagePrompt: section,
-          videoKeywords: [],
-        });
-      }
+    } else {
+      console.error(`No se pudo generar prompt IA para sección ${i + 1} tras ${maxAttempts} intentos:`, lastError);
+      prompts.push({
+        id: `prompt-${i + 1}`,
+        section: i + 1,
+        text: section,
+        prompt: section,
+        imagePrompt: section,
+        videoKeywords: [],
+      });
     }
   }
 

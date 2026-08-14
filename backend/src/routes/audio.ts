@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import axios from 'axios';
 import {
   generateAudioAI33Pro,
   generateBatchAudio,
@@ -461,6 +462,52 @@ router.post('/webhook', async (req: Request, res: Response) => {
     console.error('Error processing webhook:', error);
     res.status(500).json({
       error: 'Failed to process webhook',
+    });
+  }
+});
+
+// ========== GET AUDIO FILE ==========
+router.get('/file/:taskId', async (req: Request, res: Response) => {
+  try {
+    const { taskId } = req.params;
+
+    if (!taskId) {
+      return res.status(400).json({ error: 'taskId is required' });
+    }
+
+    const taskStatus = await getTaskStatus(taskId);
+
+    if (!taskStatus) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    if (taskStatus.status !== 'done') {
+      return res.status(400).json({
+        error: 'Audio is not ready',
+        status: taskStatus.status,
+        progress: taskStatus.progress,
+      });
+    }
+
+    const audioUrl = taskStatus.metadata?.audio_url;
+
+    if (!audioUrl) {
+      return res.status(400).json({ error: 'Audio URL not found in task response' });
+    }
+
+    // Download the audio file from the URL
+    const audioResponse = await axios.get(audioUrl, {
+      responseType: 'arraybuffer',
+    });
+
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Content-Disposition', `attachment; filename="audio_${taskId.substring(0, 8)}.mp3"`);
+    res.send(audioResponse.data);
+  } catch (error) {
+    console.error('Error downloading audio file:', error);
+    res.status(500).json({
+      error: 'Failed to download audio file',
+      details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
 });

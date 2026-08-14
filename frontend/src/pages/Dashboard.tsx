@@ -1,102 +1,125 @@
 import { useState } from 'react';
-import { FileText, Image, Volume2, Video, Sparkles, Film, Zap } from 'lucide-react';
+import { FileText, Image, Volume2, Video, Sparkles, Film, Scissors, ListVideo, Layers, History } from 'lucide-react';
 import ScriptUploader from '../components/ScriptUploader';
 import PromptGenerator from '../components/PromptGenerator';
 import ImageGenerator from '../components/ImageGenerator';
 import AudioGenerator from '../components/AudioGenerator';
 import StockVideoSearch from '../components/StockVideoSearch';
 import VideoEditor from '../components/VideoEditor';
+import ClipEditor from '../components/ClipEditor';
+import VideoQueueEditor from '../components/VideoQueueEditor';
+import ImageSequenceEditor from '../components/ImageSequenceEditor';
+import HistoryPanel from '../components/HistoryPanel';
 
-type Tab = 'script' | 'prompts' | 'images' | 'audio' | 'stock' | 'editor';
+type Tab = 'script' | 'prompts' | 'images' | 'audio' | 'stock' | 'editor' | 'clips' | 'queue' | 'imageSequence' | 'history';
+
+interface TabDef {
+  id: Tab;
+  label: string;
+  icon: React.ReactNode;
+  group: 'crear' | 'producir';
+  status: string;
+}
 
 export default function Dashboard() {
   const [activeTab, setActiveTab] = useState<Tab>('script');
   const [scriptContent, setScriptContent] = useState('');
   const [generatedPrompts, setGeneratedPrompts] = useState([]);
+  const [stockPercentage, setStockPercentage] = useState(50);
 
-  const tabs: Array<{ id: Tab; label: string; icon: React.ReactNode; color: string }> = [
-    { id: 'script', label: 'Guion', icon: <FileText className="w-5 h-5" />, color: 'from-blue-500 to-cyan-500' },
-    { id: 'prompts', label: 'Prompts', icon: <Sparkles className="w-5 h-5" />, color: 'from-purple-500 to-pink-500' },
-    { id: 'images', label: 'Imágenes', icon: <Image className="w-5 h-5" />, color: 'from-amber-500 to-orange-500' },
-    { id: 'audio', label: 'Audio', icon: <Volume2 className="w-5 h-5" />, color: 'from-green-500 to-emerald-500' },
-    { id: 'stock', label: 'Videos Stock', icon: <Video className="w-5 h-5" />, color: 'from-red-500 to-pink-500' },
-    { id: 'editor', label: 'Editor', icon: <Film className="w-5 h-5" />, color: 'from-indigo-500 to-purple-500' },
+  const tabs: TabDef[] = [
+    { id: 'script', label: 'Guion', icon: <FileText className="w-4 h-4" />, group: 'crear', status: 'Editando el guion base' },
+    { id: 'prompts', label: 'Prompts', icon: <Sparkles className="w-4 h-4" />, group: 'crear', status: 'Generando prompts cinematográficos' },
+    { id: 'images', label: 'Imágenes', icon: <Image className="w-4 h-4" />, group: 'crear', status: 'Generando imágenes con IA' },
+    { id: 'audio', label: 'Audio', icon: <Volume2 className="w-4 h-4" />, group: 'crear', status: 'Generando narración por voz' },
+    { id: 'stock', label: 'Videos Stock', icon: <Video className="w-4 h-4" />, group: 'crear', status: 'Buscando material de stock' },
+    { id: 'editor', label: 'Editor', icon: <Film className="w-4 h-4" />, group: 'producir', status: 'Ensamblando el video final' },
+    { id: 'clips', label: 'Editor de Clips', icon: <Scissors className="w-4 h-4" />, group: 'producir', status: 'Reordenando clips y sincronizando audio' },
+    { id: 'queue', label: 'Cola de Edición', icon: <ListVideo className="w-4 h-4" />, group: 'producir', status: 'Procesando videos en cola' },
+    { id: 'imageSequence', label: 'Secuencia de Imágenes', icon: <Layers className="w-4 h-4" />, group: 'producir', status: 'Armando secuencia de imágenes' },
+    { id: 'history', label: 'Historial', icon: <History className="w-4 h-4" />, group: 'producir', status: 'Revisando videos generados' },
   ];
 
-  return (
-    <div className="space-y-8">
-      {/* Tab Navigation */}
-      <div className="flex flex-wrap gap-3 p-2 bg-white/60 rounded-3xl border-2 border-purple-200/30 backdrop-blur-lg shadow-xl">
-        {tabs.map(tab => (
+  const active = tabs.find(t => t.id === activeTab)!;
+  const crearTabs = tabs.filter(t => t.group === 'crear');
+  const producirTabs = tabs.filter(t => t.group === 'producir');
+
+  const SidebarGroup = ({ title, items }: { title: string; items: TabDef[] }) => (
+    <div>
+      <p className="text-gray-400 dark:text-zinc-600 text-[9px] font-medium uppercase tracking-widest px-3 mb-2">{title}</p>
+      <div className="space-y-0.5">
+        {items.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`flex items-center gap-2 px-5 py-3 rounded-2xl font-bold transition-all duration-300 ${
+            className={`w-full flex items-center gap-3 px-3 py-2 text-sm transition-colors text-left border-l-2 ${
               activeTab === tab.id
-                ? `bg-gradient-to-r ${tab.color} text-white shadow-lg -translate-y-1`
-                : 'bg-gradient-to-r from-gray-100 to-gray-50 text-gray-700 hover:from-gray-200 hover:to-gray-100 hover:shadow-md hover:-translate-y-0.5'
+                ? 'bg-accent-50 dark:bg-accent-950/40 border-accent-500 text-accent-700 dark:text-accent-300 font-medium'
+                : 'border-transparent text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-900 hover:text-gray-900 dark:hover:text-zinc-200'
             }`}
           >
-            {tab.icon}
-            <span>{tab.label}</span>
-            {activeTab === tab.id && <Zap className="w-4 h-4 ml-1" />}
+            <span className={activeTab === tab.id ? 'text-accent-600 dark:text-accent-400' : 'text-gray-400 dark:text-zinc-500'}>
+              {tab.icon}
+            </span>
+            <span className="truncate">{tab.label}</span>
           </button>
         ))}
       </div>
+    </div>
+  );
 
-      {/* Content Sections */}
-      <div className="space-y-6">
-        {/* Script Upload Tab */}
-        {activeTab === 'script' && (
-          <div className="animate-in fade-in duration-300">
+  return (
+    <div className="flex flex-col md:flex-row gap-6 items-start">
+      {/* Sidebar */}
+      <aside className="w-full md:w-64 shrink-0 md:sticky md:top-28 bg-white dark:bg-zinc-950 border border-gray-100 dark:border-zinc-800/60 rounded-xl p-4 space-y-6">
+        <SidebarGroup title="Crear" items={crearTabs} />
+        <SidebarGroup title="Producir" items={producirTabs} />
+      </aside>
+
+      {/* Canvas */}
+      <div className="flex-1 min-w-0 w-full space-y-4">
+        {/* Herramienta activa */}
+        <div key={activeTab} className="animate-materialize">
+          {activeTab === 'script' && (
             <ScriptUploader
               onScriptLoad={setScriptContent}
               scriptContent={scriptContent}
+              stockPercentage={stockPercentage}
+              onStockPercentageChange={setStockPercentage}
             />
-          </div>
-        )}
+          )}
 
-        {/* Prompts Generator Tab */}
-        {activeTab === 'prompts' && (
-          <div className="animate-in fade-in duration-300">
+          {activeTab === 'prompts' && (
             <PromptGenerator
               scriptContent={scriptContent}
               onGeneratePrompts={setGeneratedPrompts}
               generatedPrompts={generatedPrompts}
             />
-          </div>
-        )}
+          )}
 
-        {/* Images Generator Tab */}
-        {activeTab === 'images' && (
-          <div className="animate-in fade-in duration-300">
-            <ImageGenerator
-              prompts={generatedPrompts}
-            />
-          </div>
-        )}
+          {activeTab === 'images' && <ImageGenerator prompts={generatedPrompts} />}
 
-        {/* Audio Generator Tab */}
-        {activeTab === 'audio' && (
-          <div className="animate-in fade-in duration-300">
-            <AudioGenerator
-              scriptSections={scriptContent.split(/\n\s*\n+/)}
-            />
-          </div>
-        )}
+          {activeTab === 'audio' && <AudioGenerator scriptSections={scriptContent.split(/\n\s*\n+/)} />}
 
-        {/* Stock Videos Tab */}
-        {activeTab === 'stock' && (
-          <div className="animate-in fade-in duration-300">
-            <StockVideoSearch />
-          </div>
-        )}
+          {activeTab === 'stock' && <StockVideoSearch />}
 
-        {activeTab === 'editor' && (
-          <div className="animate-in fade-in duration-300">
-            <VideoEditor />
-          </div>
-        )}
+          {activeTab === 'editor' && <VideoEditor />}
+
+          {activeTab === 'clips' && <ClipEditor />}
+
+          {activeTab === 'queue' && <VideoQueueEditor />}
+
+          {activeTab === 'imageSequence' && <ImageSequenceEditor />}
+
+          {activeTab === 'history' && <HistoryPanel />}
+        </div>
+
+        {/* Barra de estado inferior — Núcleo IA */}
+        <div className="bg-white dark:bg-zinc-950 border-t border-gray-100 dark:border-zinc-800 rounded-lg px-4 py-2 flex items-center gap-2">
+          <div className="w-1.5 h-1.5 rounded-full bg-accent-500 animate-pulse shrink-0" />
+          <span className="text-gray-400 dark:text-zinc-500 text-[10px]">IA activa —</span>
+          <span className="text-gray-600 dark:text-zinc-400 text-[10px] truncate">{active.status}</span>
+        </div>
       </div>
     </div>
   );

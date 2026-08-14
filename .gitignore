@@ -38,3 +38,9 @@ backend/uploads/*
 *.webm
 *.mp3
 *.wav
+
+# Base de datos local (historial de trabajos, rutas de archivos de tu maquina)
+backend/.db/
+
+# Config local del launcher de vista previa
+.claude/

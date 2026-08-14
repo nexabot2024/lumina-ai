@@ -1,6 +1,7 @@
 import ffmpeg from 'fluent-ffmpeg';
 import { v4 as uuidv4 } from 'uuid';
 import { existsSync, writeFileSync } from 'fs';
+import { promises as fs } from 'fs';
 import { join } from 'path';
 
 // Configure FFmpeg path if it exists locally
@@ -19,6 +20,8 @@ export interface VideoAsset {
   path: string;
   duration?: number;
   startTime?: number;
+  transition?: string;
+  transitionDuration?: number;
 }
 
 export interface VideoProject {
@@ -47,9 +50,139 @@ const RESOLUTION_MAP = {
   '4k': { width: 3840, height: 2160 },
 };
 
-export async function compileVideo(
+interface PreValidationResult {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+  metadata: {
+    totalDuration: number;
+    estimatedSize: number;
+    assetCount: number;
+  };
+}
+
+async function getFileMetadata(filePath: string): Promise<any> {
+  return new Promise((resolve, reject) => {
+    ffmpeg.ffprobe(filePath, (err, data) => {
+      if (err) reject(err);
+      else resolve(data);
+    });
+  });
+}
+
+export async function preValidateProject(
   project: VideoProject,
   options: CompilationOptions = {}
+): Promise<PreValidationResult> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  let totalDuration = 0;
+  let estimatedSize = 0;
+
+  const uploadDirRel = process.env.UPLOAD_DIR || './uploads';
+  const uploadDir = join(process.cwd(), uploadDirRel);
+
+  // 1. Validar que FFmpeg/ffprobe existen
+  if (!existsSync(ffmpegPath)) {
+    errors.push(`FFmpeg no encontrado en: ${ffmpegPath}`);
+  }
+  if (!existsSync(ffprobePath)) {
+    errors.push(`ffprobe no encontrado en: ${ffprobePath}`);
+  }
+
+  // 2. Validar assets
+  for (let i = 0; i < project.assets.length; i++) {
+    const asset = project.assets[i];
+    const absolutePath = asset.path.startsWith('/uploads/')
+      ? join(uploadDir, asset.path.replace('/uploads/', ''))
+      : asset.path;
+
+    if (!existsSync(absolutePath)) {
+      errors.push(`Asset ${i}: Archivo no encontrado: ${absolutePath}`);
+      continue;
+    }
+
+    try {
+      const metadata = await getFileMetadata(absolutePath);
+      const duration = metadata.format.duration || asset.duration || 5;
+      totalDuration += duration;
+
+      // Validar streams
+      if (asset.type !== 'audio') {
+        if (!metadata.streams.some((s: any) => s.codec_type === 'video')) {
+          errors.push(`Asset ${i}: No contiene stream de video`);
+        }
+      }
+
+      if (metadata.streams.length === 0) {
+        errors.push(`Asset ${i}: Archivo sin streams válidos`);
+      }
+    } catch (err) {
+      errors.push(`Asset ${i}: Error al probar: ${err instanceof Error ? err.message : 'Unknown'}`);
+    }
+  }
+
+  // 3. Validar audio tracks
+  for (let i = 0; i < project.audioTracks.length; i++) {
+    const track = project.audioTracks[i];
+    const absolutePath = track.startsWith('/uploads/')
+      ? join(uploadDir, track.replace('/uploads/', ''))
+      : track;
+
+    if (!existsSync(absolutePath)) {
+      errors.push(`Audio track ${i}: Archivo no encontrado: ${absolutePath}`);
+      continue;
+    }
+
+    try {
+      const metadata = await getFileMetadata(absolutePath);
+      if (!metadata.streams.some((s: any) => s.codec_type === 'audio')) {
+        warnings.push(`Audio track ${i}: No contiene stream de audio`);
+      }
+    } catch (err) {
+      errors.push(`Audio track ${i}: Error al probar: ${err instanceof Error ? err.message : 'Unknown'}`);
+    }
+  }
+
+  // 4. Validar espacio en disco (estimado: 200MB por minuto aprox)
+  const bitrate = parseInt(options.bitrate?.replace('k', '') || '5000');
+  estimatedSize = (totalDuration * bitrate * 1000) / 8; // bytes
+  const estimatedMB = estimatedSize / (1024 * 1024);
+
+  const stats = await fs.stat(uploadDir).catch(() => null);
+  if (stats) {
+    const freeMB = 100000; // Asumir que hay espacio (este es un estimate)
+    if (estimatedMB > freeMB) {
+      warnings.push(`Espacio estimado: ${estimatedMB.toFixed(0)}MB. Verifica espacio disponible.`);
+    }
+  }
+
+  // 5. Validar directorios de output
+  const videosDir = join(uploadDir, 'videos');
+  if (!existsSync(videosDir)) {
+    try {
+      await fs.mkdir(videosDir, { recursive: true });
+    } catch (err) {
+      errors.push(`No se puede crear directorio de videos: ${err instanceof Error ? err.message : 'Unknown'}`);
+    }
+  }
+
+  return {
+    isValid: errors.length === 0,
+    errors,
+    warnings,
+    metadata: {
+      totalDuration,
+      estimatedSize,
+      assetCount: project.assets.length + project.audioTracks.length,
+    },
+  };
+}
+
+export async function compileVideo(
+  project: VideoProject,
+  options: CompilationOptions = {},
+  onEvent?: (type: string, message: string, percent?: number) => void
 ): Promise<string> {
   const {
     fps = 30,
@@ -61,11 +194,18 @@ export async function compileVideo(
 
   const { width, height } = RESOLUTION_MAP[resolution];
   const outputId = uuidv4();
-  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  const uploadDirRel = process.env.UPLOAD_DIR || './uploads';
+  const uploadDir = join(process.cwd(), uploadDirRel);
   const outputPath = join(uploadDir, 'videos', `${outputId}.mp4`);
 
   try {
-    // Create concat demuxer file
+    // Ensure directories exist
+    const videosDir = join(uploadDir, 'videos');
+    if (!existsSync(videosDir)) {
+      await fs.mkdir(videosDir, { recursive: true });
+    }
+
+    // Create concat demuxer file with absolute path
     const demuxerPath = join(uploadDir, `demux-${outputId}.txt`);
     const demuxerContent = project.assets
       .filter(a => a.type !== 'audio')
@@ -81,10 +221,10 @@ export async function compileVideo(
     return new Promise((resolve, reject) => {
       let command = ffmpeg();
 
-      // Add input files
-      command = command.input(demuxerPath).inputOption('-f', 'concat').inputOption('-safe', '0');
+      // Add input files (video/images only, no embedded audio)
+      command = command.input(demuxerPath).inputOption('-f', 'concat').inputOption('-safe', '0').inputOption('-an').inputOption('-vsync', 'vfr');
 
-      // Add audio track
+      // Add audio track (paths are already absolute from compilation.ts)
       if (project.audioTracks.length > 0) {
         command = command.input(project.audioTracks[0]);
       }
@@ -100,21 +240,34 @@ export async function compileVideo(
           `-pix_fmt yuv420p`,
           `-r ${fps}`,
           `-s ${width}x${height}`,
+          `-movflags +faststart`,
+          `-g 30`, // Keyframe every 30 frames for smooth seeking
+          `-keyint_min 30`,
+          `-max_muxing_queue_size 9999`, // Prevent buffer overflow
           `-y`, // Overwrite output
         ])
         .output(outputPath)
         .on('start', cmdline => {
           console.log(`FFmpeg: ${cmdline}`);
+          onEvent?.('info', '🎬 Iniciando FFmpeg...');
         })
         .on('progress', progress => {
-          console.log(`Progress: ${progress.percent}% done`);
+          const percent = progress.percent || 0;
+          console.log(`Progress: ${percent}% done`);
+          onEvent?.('progress', `Codificando... ${Math.round(percent)}%`, percent);
         })
         .on('end', () => {
-          console.log(`✅ Video compilado: ${outputPath}`);
-          resolve(outputPath);
+          console.log(`✅ Compilación de FFmpeg completa: ${outputPath}`);
+          onEvent?.('info', '📝 Finalizando escritura...');
+          setTimeout(() => {
+            console.log(`✅ Video compilado completamente: ${outputPath}`);
+            onEvent?.('success', `✅ Video compilado: ${outputPath}`, 100);
+            resolve(outputPath);
+          }, 2000);
         })
         .on('error', (err: Error) => {
           console.error(`❌ Error compilando video: ${err.message}`);
+          onEvent?.('error', `❌ Error FFmpeg: ${err.message}`);
           reject(err);
         })
         .run();

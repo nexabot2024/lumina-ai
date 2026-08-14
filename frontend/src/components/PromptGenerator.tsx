@@ -9,6 +9,7 @@ interface Prompt {
   text: string;
   imagePrompt: string;
   videoKeywords: string[];
+  failed?: boolean;
 }
 
 interface PromptGeneratorProps {
@@ -17,18 +18,22 @@ interface PromptGeneratorProps {
   generatedPrompts: Prompt[];
 }
 
+const CONCURRENCY = 5;
+
 export default function PromptGenerator({
   scriptContent,
   onGeneratePrompts,
   generatedPrompts,
 }: PromptGeneratorProps) {
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValues, setEditValues] = useState<Partial<Prompt>>({});
   const [style, setStyle] = useState('cinematic');
   const [tone, setTone] = useState('professional');
   const [manualMode, setManualMode] = useState(false);
   const [manualPrompts, setManualPrompts] = useState('');
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
 
   // Contar puntos en el guión para determinar número de secciones
   const numSections = useMemo(() => {
@@ -64,6 +69,33 @@ export default function PromptGenerator({
     return sectionsArray;
   }, [scriptContent, numSections]);
 
+  const requestPromptForSection = async (section: string): Promise<{ imagePrompt: string; videoKeywords: string[]; failed: boolean }> => {
+    try {
+      const response = await axios.post('/api/prompts/parse', {
+        scriptText: section,
+        style,
+        tone,
+      });
+
+      // Si la API devuelve un array de prompts, tomar el primero
+      const promptData = Array.isArray(response.data.prompts)
+        ? response.data.prompts[0]
+        : response.data.prompts;
+
+      const imagePrompt = promptData?.imagePrompt || section;
+
+      return {
+        imagePrompt,
+        videoKeywords: promptData?.videoKeywords || extractKeywords(section),
+        // El backend cae de vuelta al texto original cuando la IA falla tras reintentar
+        failed: imagePrompt === section,
+      };
+    } catch (error) {
+      console.error('Error generando prompt de sección:', error);
+      return { imagePrompt: section, videoKeywords: extractKeywords(section), failed: true };
+    }
+  };
+
   const handleGeneratePrompts = async () => {
     if (!scriptContent.trim()) {
       toast.error('Por favor carga un guion primero');
@@ -71,42 +103,71 @@ export default function PromptGenerator({
     }
 
     setLoading(true);
+    setProgress({ done: 0, total: scriptSections.length });
+
+    // Resultados indexados por posición para preservar el orden de las secciones
+    const results: (Prompt | null)[] = new Array(scriptSections.length).fill(null);
+    let doneCount = 0;
+    let failedCount = 0;
+
+    const processSection = async (i: number) => {
+      const section = scriptSections[i];
+      const { imagePrompt, videoKeywords, failed } = await requestPromptForSection(section);
+
+      results[i] = {
+        id: crypto.randomUUID(),
+        section: i + 1,
+        text: section,
+        imagePrompt,
+        videoKeywords,
+        failed,
+      };
+
+      if (failed) failedCount++;
+      doneCount++;
+      setProgress({ done: doneCount, total: scriptSections.length });
+
+      // Guardado incremental: si algo falla más adelante, no se pierde lo ya generado
+      onGeneratePrompts(results.filter((p): p is Prompt => p !== null));
+    };
+
+    // Procesa en lotes con concurrencia limitada para no agotar el rate limit de la API
+    for (let i = 0; i < scriptSections.length; i += CONCURRENCY) {
+      const batch = scriptSections
+        .slice(i, i + CONCURRENCY)
+        .map((_, offset) => processSection(i + offset));
+      await Promise.all(batch);
+    }
+
+    setLoading(false);
+
+    if (failedCount > 0) {
+      toast.error(
+        `⚠️ ${failedCount} de ${scriptSections.length} secciones no generaron prompt IA (se usó el texto original). Puedes reintentarlas individualmente.`
+      );
+    } else {
+      toast.success(`✨ ${scriptSections.length} secciones de prompts generadas`);
+    }
+  };
+
+  const handleRegenerateSection = async (prompt: Prompt) => {
+    setRegeneratingId(prompt.id);
     try {
-      // Generar prompts para cada sección
-      const newPrompts: Prompt[] = [];
+      const { imagePrompt, videoKeywords, failed } = await requestPromptForSection(prompt.text);
 
-      for (let i = 0; i < scriptSections.length; i++) {
-        const section = scriptSections[i];
-        const response = await axios.post('/api/prompts/parse', {
-          scriptText: section,
-          style: style,
-          tone: tone,
-        });
+      onGeneratePrompts(
+        generatedPrompts.map(p =>
+          p.id === prompt.id ? { ...p, imagePrompt, videoKeywords, failed } : p
+        )
+      );
 
-        // Si la API devuelve un array de prompts, tomar el primero
-        const promptData = Array.isArray(response.data.prompts)
-          ? response.data.prompts[0]
-          : response.data.prompts;
-
-        newPrompts.push({
-          id: crypto.randomUUID(),
-          section: i + 1,
-          text: section,
-          imagePrompt: promptData?.imagePrompt || section,
-          videoKeywords: promptData?.videoKeywords || extractKeywords(section),
-        });
-
-        // Pequeña pausa para no saturar el servidor
-        await new Promise(resolve => setTimeout(resolve, 200));
+      if (failed) {
+        toast.error('Sigue sin poder generarse el prompt IA para esta sección');
+      } else {
+        toast.success('✨ Prompt regenerado');
       }
-
-      onGeneratePrompts(newPrompts);
-      toast.success(`✨ ${newPrompts.length} secciones de prompts generadas`);
-    } catch (error) {
-      toast.error('Error al generar prompts');
-      console.error(error);
     } finally {
-      setLoading(false);
+      setRegeneratingId(null);
     }
   };
 
@@ -176,33 +237,33 @@ export default function PromptGenerator({
     <div className="space-y-8">
       {/* Configuration Section */}
       <div className="card-lg">
-        <div className="flex items-center gap-4 mb-6">
-          <div className="p-3 bg-gradient-to-br from-purple-400 to-pink-400 rounded-2xl shadow-lg animate-float">
-            <Sparkles className="w-6 h-6 text-white" />
+        <div className="flex items-center gap-3 mb-6">
+          <div className="p-2.5 bg-accent-600 rounded-lg">
+            <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-3xl font-black text-gray-800">Generador de Prompts</h2>
-            <p className="text-gray-600 text-sm font-medium">Crea automáticamente prompts para cada sección del guión</p>
+            <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Generador de Prompts</h2>
+            <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Crea automáticamente prompts para cada sección del guión</p>
           </div>
         </div>
 
         {numSections > 0 && (
-          <div className="mb-6 p-4 bg-gradient-to-r from-blue-100 to-purple-100 rounded-2xl border-2 border-blue-300/50 flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
+          <div className="mb-6 p-4 bg-accent-50 dark:bg-accent-950/50 rounded-lg border border-accent-200 dark:border-accent-800 flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-accent-600 mt-0.5 flex-shrink-0 dark:text-accent-400" />
             <div>
-              <p className="font-semibold text-blue-900">Se crearán {numSections} secciones</p>
-              <p className="text-sm text-blue-800">Tu guión contiene {numSections} punto{numSections !== 1 ? 's' : ''}, por lo que se generarán {numSections} secciones de prompts</p>
+              <p className="font-medium text-sm text-accent-900 dark:text-accent-200">Se crearán {numSections} secciones</p>
+              <p className="text-xs text-accent-700 dark:text-accent-300">Tu guión contiene {numSections} punto{numSections !== 1 ? 's' : ''}, por lo que se generarán {numSections} secciones de prompts</p>
             </div>
           </div>
         )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
           <div>
-            <label className="block text-sm font-bold mb-3 text-gray-700">🎨 Estilo Visual</label>
+            <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">🎨 Estilo Visual</label>
             <select
               value={style}
               onChange={(e) => setStyle(e.target.value)}
-              className="w-full px-4 py-3 bg-white border-2 border-purple-200 rounded-xl text-gray-800 font-medium focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200 transition-all"
+              className="w-full px-3 py-2.5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
             >
               <option value="cinematic">Cinemático</option>
               <option value="photorealistic">Fotorrealista</option>
@@ -213,11 +274,11 @@ export default function PromptGenerator({
           </div>
 
           <div>
-            <label className="block text-sm font-bold mb-3 text-gray-700">🎭 Tono</label>
+            <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">🎭 Tono</label>
             <select
               value={tone}
               onChange={(e) => setTone(e.target.value)}
-              className="w-full px-4 py-3 bg-white border-2 border-pink-200 rounded-xl text-gray-800 font-medium focus:border-pink-500 focus:outline-none focus:ring-2 focus:ring-pink-200 transition-all"
+              className="w-full px-3 py-2.5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
             >
               <option value="professional">Profesional</option>
               <option value="casual">Casual</option>
@@ -235,7 +296,9 @@ export default function PromptGenerator({
             className="btn-primary flex-1 flex items-center justify-center gap-2 text-lg"
           >
             {loading && <Loader className="w-6 h-6 animate-spin" />}
-            {loading ? 'Generando...' : `🤖 Generar ${numSections} Prompts`}
+            {loading
+              ? `Generando... (${progress.done}/${progress.total})`
+              : `🤖 Generar ${numSections} Prompts`}
           </button>
           <button
             onClick={() => setManualMode(!manualMode)}
@@ -249,8 +312,8 @@ export default function PromptGenerator({
       {/* Manual Mode */}
       {manualMode && (
         <div className="card-lg">
-          <h3 className="text-2xl font-black text-gray-800 mb-4">✏️ Ingresa Prompts Manualmente</h3>
-          <p className="text-gray-600 text-sm mb-4">Pega un prompt por línea. Cada línea será una sección:</p>
+          <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium mb-1">✏️ Ingresa Prompts Manualmente</h3>
+          <p className="text-gray-400 dark:text-zinc-500 text-[10px] mb-4">Pega un prompt por línea. Cada línea será una sección:</p>
 
           <textarea
             value={manualPrompts}
@@ -258,7 +321,7 @@ export default function PromptGenerator({
             placeholder="Ultra-detailed cinematic shot of...
 Aerial drone view of...
 Macro close-up of..."
-            className="w-full h-64 p-4 bg-white border-2 border-purple-200 rounded-xl text-gray-800 font-medium focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-200 mb-4 resize-none"
+            className="w-full h-64 p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-600 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none mb-4 resize-none font-mono-ui text-sm"
           />
 
           <div className="flex gap-3">
@@ -285,9 +348,9 @@ Macro close-up of..."
       {generatedPrompts.length > 0 && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-black text-gray-800 flex items-center gap-3">
-              <div className="p-2 bg-gradient-to-br from-purple-400 to-pink-400 rounded-xl">
-                <Sparkles className="w-6 h-6 text-white" />
+            <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium flex items-center gap-3">
+              <div className="p-2.5 bg-accent-600 rounded-lg">
+                <Sparkles className="w-5 h-5 text-white" />
               </div>
               Prompts Generados ({generatedPrompts.length} secciones)
             </h3>
@@ -297,25 +360,25 @@ Macro close-up of..."
             {generatedPrompts.map((prompt) => (
               <div
                 key={prompt.id}
-                className="card-gradient p-6 hover:shadow-2xl hover-lift border-2 border-purple-200/50"
+                className="card-gradient hover-lift border border-accent-200/50 dark:border-accent-800/50"
               >
                 {editingId === prompt.id ? (
                   // Edit Mode
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-semibold mb-2">Texto Original</label>
+                      <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">Texto Original</label>
                       <textarea
                         value={editValues.text || ''}
                         onChange={(e) =>
                           setEditValues({ ...editValues, text: e.target.value })
                         }
-                        className="w-full p-2 bg-gray-900/50 border border-white/10 rounded text-sm text-white"
+                        className="w-full p-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-900 dark:text-zinc-100 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
                         rows={3}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold mb-2">
+                      <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">
                         Prompt de Imagen
                       </label>
                       <textarea
@@ -323,13 +386,13 @@ Macro close-up of..."
                         onChange={(e) =>
                           setEditValues({ ...editValues, imagePrompt: e.target.value })
                         }
-                        className="w-full p-2 bg-gray-900/50 border border-white/10 rounded text-sm text-white"
+                        className="w-full p-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-900 dark:text-zinc-100 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none font-mono-ui"
                         rows={3}
                       />
                     </div>
 
                     <div>
-                      <label className="block text-sm font-semibold mb-2">
+                      <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">
                         Palabras Clave de Video
                       </label>
                       <input
@@ -342,7 +405,7 @@ Macro close-up of..."
                           })
                         }
                         placeholder="keyword1, keyword2, keyword3"
-                        className="w-full p-2 bg-gray-900/50 border border-white/10 rounded text-sm text-white"
+                        className="w-full p-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-600 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
                       />
                     </div>
 
@@ -366,46 +429,64 @@ Macro close-up of..."
                   <>
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
-                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-gradient-vibrant text-sm font-bold">
+                        <span className="inline-flex items-center justify-center w-8 h-8 rounded-full bg-accent-600 text-white text-sm font-bold">
                           {prompt.section}
                         </span>
-                        <span className="text-sm text-gray-400">
+                        <span className="text-sm text-gray-400 dark:text-zinc-500">
                           Sección {prompt.section}
                         </span>
+                        {prompt.failed && (
+                          <span className="flex items-center gap-1 text-xs font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded-full dark:text-amber-400 dark:bg-amber-950 dark:border-amber-800">
+                            <AlertCircle className="w-3 h-3" />
+                            Sin prompt IA
+                          </span>
+                        )}
                       </div>
                       <button
                         onClick={() => handleEditPrompt(prompt)}
-                        className="p-2 hover:bg-white/10 rounded transition-colors"
+                        className="p-2 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
                       >
-                        <Edit2 className="w-4 h-4 text-gray-400" />
+                        <Edit2 className="w-4 h-4 text-gray-400 dark:text-zinc-500" />
                       </button>
                     </div>
 
                     <div className="space-y-3">
                       <div>
-                        <p className="text-xs font-semibold text-gray-400 mb-1">
+                        <p className="text-xs font-semibold text-gray-400 dark:text-zinc-600 mb-1">
                           TEXTO ORIGINAL
                         </p>
-                        <p className="text-sm text-gray-300">{prompt.text}</p>
+                        <p className="text-sm text-gray-500 dark:text-zinc-400">{prompt.text}</p>
                       </div>
 
                       <div>
                         <div className="flex items-center justify-between mb-1">
-                          <p className="text-xs font-semibold text-gray-400">
+                          <p className="text-xs font-semibold text-gray-400 dark:text-zinc-600">
                             PROMPT DE IMAGEN
                           </p>
                           <button
                             onClick={() => handleCopyPrompt(prompt.imagePrompt)}
-                            className="p-1 hover:bg-white/10 rounded transition-colors"
+                            className="p-1 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
                           >
-                            <Copy className="w-4 h-4 text-gray-400" />
+                            <Copy className="w-4 h-4 text-gray-400 dark:text-zinc-500" />
                           </button>
                         </div>
-                        <p className="text-sm text-white bg-purple-950/50 p-3 rounded border border-purple-500/40 leading-relaxed">
+                        <p className="text-sm text-gray-900 dark:text-zinc-100 bg-accent-50 dark:bg-accent-950/50 p-3 rounded-lg border border-accent-200 dark:border-accent-800 leading-relaxed">
                           {prompt.imagePrompt}
                         </p>
                       </div>
 
+                      {prompt.failed && (
+                        <button
+                          onClick={() => handleRegenerateSection(prompt)}
+                          disabled={regeneratingId === prompt.id}
+                          className="btn-secondary w-full py-2 text-sm font-bold flex items-center justify-center gap-2"
+                        >
+                          {regeneratingId === prompt.id && (
+                            <Loader className="w-4 h-4 animate-spin" />
+                          )}
+                          {regeneratingId === prompt.id ? 'Reintentando...' : '🔄 Reintentar Prompt IA'}
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -417,8 +498,8 @@ Macro close-up of..."
 
       {generatedPrompts.length === 0 && !loading && (
         <div className="card-lg text-center py-12">
-          <Sparkles className="w-12 h-12 text-gray-600 mx-auto mb-3" />
-          <p className="text-gray-400">
+          <Sparkles className="w-12 h-12 text-gray-300 dark:text-zinc-700 mx-auto mb-3" />
+          <p className="text-gray-400 dark:text-zinc-500 text-sm">
             Genera prompts automáticamente desde tu guion
           </p>
         </div>
