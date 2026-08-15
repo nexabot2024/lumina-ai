@@ -323,7 +323,7 @@ export async function createVideoFromImages(
         ])
         .output(outputPath)
         .on('end', () => {
-          resolve({ id: projectId, path: outputPath });
+          resolve({ id: projectId, path: `/uploads/videos/${projectId}.mp4` });
         })
         .on('error', reject)
         .run();

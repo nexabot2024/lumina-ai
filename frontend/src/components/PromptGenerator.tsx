@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { Sparkles, Loader, Copy, Edit2, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
+import { API_URL } from '../services/apiUrl';
 
 interface Prompt {
   id: string;
@@ -71,7 +72,7 @@ export default function PromptGenerator({
 
   const requestPromptForSection = async (section: string): Promise<{ imagePrompt: string; videoKeywords: string[]; failed: boolean }> => {
     try {
-      const response = await axios.post('/api/prompts/parse', {
+      const response = await axios.post(`${API_URL}/api/prompts/parse`, {
         scriptText: section,
         style,
         tone,

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ListVideo, Upload, X, FolderOpen, Play, Loader, CheckCircle, AlertCircle, Clock, RotateCcw, Music } from 'lucide-react';
+import { ListVideo, Upload, X, Play, Loader, CheckCircle, AlertCircle, Clock, RotateCcw, Music, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import { API_URL } from '../services/apiUrl';
@@ -18,6 +18,7 @@ interface QueueItem {
   name: string;
   status: 'pending' | 'processing' | 'completed' | 'failed';
   outputPath?: string;
+  outputUrl?: string;
   error?: string;
 }
 
@@ -43,7 +44,6 @@ function formatMinutes(seconds: number): string {
 
 export default function VideoQueueEditor() {
   const [files, setFiles] = useState<QueueFile[]>([]);
-  const [outputFolder, setOutputFolder] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [queueId, setQueueId] = useLocalStorageState('lumina-job-videoQueue', '');
@@ -139,25 +139,9 @@ export default function VideoQueueEditor() {
     setFiles(prev => prev.map(f => (f.id === id ? { ...f, audioName: undefined, audioPath: undefined } : f)));
   };
 
-  const handlePickFolder = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/clip-editing/pick-folder`);
-      if (response.data.success && response.data.path) {
-        setOutputFolder(response.data.path);
-        toast.success('Carpeta seleccionada');
-      }
-    } catch (error) {
-      toast.error('Error al abrir el selector de carpetas');
-    }
-  };
-
   const handleStartQueue = async () => {
     if (files.length === 0) {
       toast.error('Añade al menos un video');
-      return;
-    }
-    if (!outputFolder) {
-      toast.error('Selecciona una carpeta de salida');
       return;
     }
 
@@ -167,7 +151,6 @@ export default function VideoQueueEditor() {
       await axios.post(`${API_URL}/api/video-queue/start`, {
         queueId: newQueueId,
         videos: files.map(f => ({ videoPath: f.path, audioPath: f.audioPath })),
-        outputFolder,
         splitScenes,
         maxClipDuration: wantMaxClipDuration ? maxClipDuration : undefined,
       });
@@ -338,23 +321,6 @@ export default function VideoQueueEditor() {
           )}
         </div>
 
-        {/* Output folder */}
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2 text-gray-900 dark:text-zinc-100">Carpeta de salida</label>
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={outputFolder}
-              readOnly
-              placeholder="Selecciona una carpeta..."
-              className="flex-1 px-3 py-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-gray-900 dark:text-zinc-100"
-            />
-            <button onClick={handlePickFolder} disabled={!!queueId} className="btn-secondary flex items-center gap-2 px-4 py-2">
-              <FolderOpen size={18} /> Elegir carpeta
-            </button>
-          </div>
-        </div>
-
         <div className="flex gap-3">
           <button
             onClick={handleStartQueue}
@@ -405,6 +371,15 @@ export default function VideoQueueEditor() {
                 )}
                 {item.status === 'failed' && (
                   <span className="text-xs text-red-700 dark:text-red-400">{item.error}</span>
+                )}
+                {item.status === 'completed' && item.outputUrl && (
+                  <a
+                    href={`${API_URL}${item.outputUrl}`}
+                    download
+                    className="flex items-center gap-1.5 text-xs font-semibold text-accent-600 dark:text-accent-400 hover:underline"
+                  >
+                    <Download size={14} /> Descargar
+                  </a>
                 )}
               </div>
             ))}

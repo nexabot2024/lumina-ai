@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { join, basename } from 'path';
 import { existsSync } from 'fs';
 import { reorderVideoOnly } from '../services/clipEditingService.js';
+import { OUTPUT_DIR, toOutputUrl } from '../services/outputStorage.js';
 import {
   initializeDatabase,
   createQueue,
@@ -34,6 +35,7 @@ interface QueueItem {
   name: string;
   status: ItemStatus;
   outputPath?: string;
+  outputUrl?: string;
   error?: string;
   /** Narración opcional para sincronizar con este video específico. */
   audioPath?: string;
@@ -47,7 +49,6 @@ interface QueueState {
   currentSeconds: number;
   totalSeconds: number;
   events: Array<{ type: string; message: string; percent?: number }>;
-  outputFolder: string;
   maxClipDuration?: number;
   splitScenes: boolean;
   clients: Response[];
@@ -109,12 +110,12 @@ async function processQueue(queueId: string) {
     try {
       const outputPath = await reorderVideoOnly(
         q.items[i].path,
-        q.outputFolder,
         { maxClipDuration: q.maxClipDuration, splitScenes: q.splitScenes, audioPath: q.items[i].audioPath },
         (type, message, percent, extra) => addEvent(queueId, type, message, percent, extra)
       );
       q.items[i].status = 'completed';
       q.items[i].outputPath = outputPath;
+      q.items[i].outputUrl = toOutputUrl(outputPath);
       updateQueueItemStatus(itemId, 'completed', outputPath);
       recordVideoHistory('queue', q.items[i].name, q.items[i].path, outputPath, 'completed', 0);
     } catch (error) {
@@ -156,6 +157,7 @@ function resumeOrphanedQueues() {
       // (el ffmpeg de ese video se cortó a medias) — se reintenta desde cero.
       status: item.status === 'completed' ? 'completed' : 'pending',
       outputPath: item.status === 'completed' ? item.outputPath : undefined,
+      outputUrl: item.status === 'completed' && item.outputPath ? toOutputUrl(item.outputPath) : undefined,
     }));
 
     const completedCount = items.filter(i => i.status === 'completed').length;
@@ -171,7 +173,6 @@ function resumeOrphanedQueues() {
       currentSeconds: 0,
       totalSeconds: 0,
       events: [],
-      outputFolder: orphan.outputFolder,
       maxClipDuration: orphan.maxClipDuration ?? undefined,
       splitScenes: !!orphan.splitScenes,
       clients: [],
@@ -197,20 +198,16 @@ interface QueueVideoInput {
 interface StartQueueBody {
   queueId: string;
   videos: QueueVideoInput[];
-  outputFolder: string;
   maxClipDuration?: number;
   splitScenes?: boolean;
 }
 
 router.post('/start', async (req: Request<{}, {}, StartQueueBody>, res: Response) => {
   try {
-    const { queueId, videos, outputFolder, maxClipDuration, splitScenes } = req.body;
+    const { queueId, videos, maxClipDuration, splitScenes } = req.body;
 
     if (!videos || videos.length === 0) {
       return res.status(400).json({ error: 'videos es requerido y no puede estar vacío' });
-    }
-    if (!outputFolder) {
-      return res.status(400).json({ error: 'outputFolder es requerido' });
     }
 
     const resolvedItems = videos.map(v => ({
@@ -237,14 +234,15 @@ router.post('/start', async (req: Request<{}, {}, StartQueueBody>, res: Response
       currentSeconds: 0,
       totalSeconds: 0,
       events: [],
-      outputFolder,
       maxClipDuration: maxClipDuration || undefined,
       splitScenes: splitScenes ?? true,
       clients: [],
     };
     queues.set(queueId, queue);
 
-    createQueue(queueId, outputFolder, maxClipDuration, splitScenes ?? true);
+    // La columna outputFolder de la BD queda como dato informativo (todo se
+    // guarda ahora en OUTPUT_DIR, no en una ruta elegida por el cliente).
+    createQueue(queueId, OUTPUT_DIR, maxClipDuration, splitScenes ?? true);
     queue.items.forEach((item, idx) => {
       const itemId = `${queueId}-item-${idx}`;
       addQueueItem(queueId, item.path, item.name, itemId);

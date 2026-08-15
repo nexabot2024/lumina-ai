@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { History, CheckCircle, AlertCircle, Copy, RefreshCw } from 'lucide-react';
+import { History, CheckCircle, AlertCircle, Copy, RefreshCw, Download } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import { API_URL } from '../services/apiUrl';
@@ -10,6 +10,7 @@ interface HistoryEntry {
   videoName: string;
   inputPath: string;
   outputPath: string;
+  downloadUrl?: string;
   status: 'completed' | 'failed';
   duration: number;
   createdAt: number;
@@ -134,7 +135,16 @@ export default function HistoryPanel() {
                     {entry.inputPath && ` · ${entry.inputPath}`}
                   </p>
                   {entry.status === 'completed' && entry.outputPath ? (
-                    <div className="flex items-center gap-1.5 mt-1.5">
+                    <div className="flex items-center gap-3 mt-1.5">
+                      {entry.downloadUrl && (
+                        <a
+                          href={`${API_URL}${entry.downloadUrl}`}
+                          download
+                          className="flex items-center gap-1.5 text-xs font-semibold text-accent-600 dark:text-accent-400 hover:underline shrink-0"
+                        >
+                          <Download className="w-3.5 h-3.5" /> Descargar
+                        </a>
+                      )}
                       <span className="text-xs text-gray-500 dark:text-zinc-400 truncate">{entry.outputPath}</span>
                       <button
                         onClick={() => handleCopyPath(entry.outputPath)}

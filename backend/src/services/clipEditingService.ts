@@ -4,6 +4,7 @@ import { join, resolve, dirname, basename, extname } from 'path';
 import { tmpdir } from 'os';
 import { execFile } from 'child_process';
 import { v4 as uuidv4 } from 'uuid';
+import { OUTPUT_DIR } from './outputStorage.js';
 
 /**
  * Escribe el filtro complejo a un archivo temporal en vez de pasarlo como argumento de
@@ -70,7 +71,6 @@ export interface ProcessConfig {
   subtitles: boolean;
   backgroundMusic?: BackgroundMusicConfig;
   textOverlays?: TextOverlay[];
-  outputFolder: string;
   outputFilename?: string;
   resolution?: '720p' | '1080p' | '2k' | '4k';
   fps?: number;
@@ -801,7 +801,6 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
     subtitles,
     backgroundMusic,
     textOverlays = [],
-    outputFolder,
     outputFilename,
     resolution = '1080p',
     fps = 30,
@@ -891,12 +890,8 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
     }
   }
 
-  if (!existsSync(outputFolder)) {
-    await fs.mkdir(outputFolder, { recursive: true });
-  }
-
   const outputId = outputFilename || `clip-edit-${uuidv4()}`;
-  const outputPath = join(outputFolder, `${outputId}.mp4`);
+  const outputPath = join(OUTPUT_DIR, `${outputId}.mp4`);
 
   let srtPath: string | undefined;
   if (subtitles) {
@@ -1192,7 +1187,6 @@ async function renderReorderBatch(
 
 export async function reorderVideoOnly(
   videoPath: string,
-  outputFolder: string,
   options: {
     maxClipDuration?: number;
     splitScenes?: boolean;
@@ -1254,15 +1248,11 @@ export async function reorderVideoOnly(
       : `📋 ${boundaries.length} fragmentos, reordenados`
   );
 
-  if (!existsSync(outputFolder)) {
-    await fs.mkdir(outputFolder, { recursive: true });
-  }
-
   const base = basename(videoPath, extname(videoPath));
-  const outputPath = join(outputFolder, `${base}-reordenado-${uuidv4().slice(0, 8)}.mp4`);
+  const outputPath = join(OUTPUT_DIR, `${base}-reordenado-${uuidv4().slice(0, 8)}.mp4`);
   const finalDuration = boundaries.reduce((s, b) => s + (b.end - b.start), 0);
 
-  const tempDir = join(outputFolder, `._tmp_reorder_${uuidv4().slice(0, 8)}`);
+  const tempDir = join(tmpdir(), `._tmp_reorder_${uuidv4().slice(0, 8)}`);
   await fs.mkdir(tempDir, { recursive: true });
 
   const batches: SceneBoundary[][] = [];
@@ -1320,7 +1310,6 @@ export async function reorderVideoOnly(
 
 export interface ImageSequenceConfig {
   imagePaths: string[];
-  outputFolder: string;
   outputFilename?: string;
   totalDurationSeconds?: number;
   perImageDuration?: number;
@@ -1751,7 +1740,6 @@ export async function assembleImageSequence(
 ): Promise<string> {
   const {
     imagePaths,
-    outputFolder,
     outputFilename,
     totalDurationSeconds,
     perImageDuration: fixedPerImageDuration,
@@ -1796,10 +1784,7 @@ export async function assembleImageSequence(
       : `🖼️ ${imagePaths.length} imágenes, ${(rawTargetTotal / imagePaths.length).toFixed(2)}s cada una (~${formatDuration(totalDuration)} en total)`
   );
 
-  if (!existsSync(outputFolder)) {
-    await fs.mkdir(outputFolder, { recursive: true });
-  }
-  const tempDir = resumeTempDir || join(outputFolder, `._tmp_batches_${uuidv4().slice(0, 8)}`);
+  const tempDir = resumeTempDir || join(tmpdir(), `._tmp_batches_${uuidv4().slice(0, 8)}`);
   await fs.mkdir(tempDir, { recursive: true });
 
   if (resumeCompletedBatches && Object.keys(resumeCompletedBatches).length > 0) {
@@ -1862,7 +1847,7 @@ export async function assembleImageSequence(
     }
 
     const outputId = outputFilename || `image-sequence-${uuidv4()}`;
-    const outputPath = join(outputFolder, `${outputId}.mp4`);
+    const outputPath = join(OUTPUT_DIR, `${outputId}.mp4`);
 
     onEvent?.('info', `🔗 Uniendo ${batchOutputPaths.length} lotes...`);
     if (audioPath) {

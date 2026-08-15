@@ -2,6 +2,7 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { OUTPUT_DIR, toOutputUrl } from './outputStorage.js';
 
 export interface GeneratedVideo {
   id: string;
@@ -10,6 +11,7 @@ export interface GeneratedVideo {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   videoUrl?: string;
   localPath?: string;
+  downloadUrl?: string;
   generatedAt: string;
   model: string;
 }
@@ -28,8 +30,9 @@ function getBaseUrl(): string {
   return process.env.SNAPGEN_API_BASE_URL || 'https://api.snapgen.ai';
 }
 
-// Recuerda en qué carpeta guardar cada video una vez que SnapGen termine de generarlo
-const pendingDownloads = new Map<string, { outputFolder?: string; downloaded?: string }>();
+// Recuerda la copia local (en OUTPUT_DIR) de cada video una vez descargado, para no
+// volver a bajarlo si se consulta el estado varias veces.
+const pendingDownloads = new Map<string, { downloaded?: string }>();
 
 export async function generateVideoSnapGen(
   prompt: string,
@@ -39,7 +42,6 @@ export async function generateVideoSnapGen(
     duration?: 4 | 6 | 8 | 10;
     aspectRatio?: '16:9' | '9:16';
     referenceImages?: string[];
-    outputFolder?: string;
   } = {}
 ): Promise<GeneratedVideo> {
   try {
@@ -52,7 +54,6 @@ export async function generateVideoSnapGen(
       duration = (process.env.SNAPGEN_DURATION ? parseInt(process.env.SNAPGEN_DURATION) : 8) as 4 | 6 | 8 | 10,
       aspectRatio = (process.env.SNAPGEN_ASPECT_RATIO as '16:9' | '9:16') || '16:9',
       referenceImages = [],
-      outputFolder,
     } = options;
 
     const formData = new FormData();
@@ -74,7 +75,7 @@ export async function generateVideoSnapGen(
       throw new Error(`Failed to generate video: ${data.error_message || data.message || 'Unknown error'}`);
     }
 
-    pendingDownloads.set(data.uuid, { outputFolder });
+    pendingDownloads.set(data.uuid, {});
 
     return {
       id: uuidv4(),
@@ -128,17 +129,16 @@ export async function checkSnapGenVideoStatus(taskId: string): Promise<Generated
     let localPath: string | undefined;
 
     if (status === 'completed' && videoUrl) {
-      const pending = pendingDownloads.get(taskId);
-      if (pending?.outputFolder) {
-        if (pending.downloaded) {
-          localPath = pending.downloaded;
-        } else {
-          const fileName = `snapgen_${taskId}.mp4`;
-          const filePath = path.join(pending.outputFolder, fileName);
-          await downloadVideoFile(videoUrl, filePath);
-          pending.downloaded = filePath;
-          localPath = filePath;
-        }
+      const pending = pendingDownloads.get(taskId) || {};
+      if (pending.downloaded) {
+        localPath = pending.downloaded;
+      } else {
+        const fileName = `snapgen_${taskId}.mp4`;
+        const filePath = path.join(OUTPUT_DIR, fileName);
+        await downloadVideoFile(videoUrl, filePath);
+        pending.downloaded = filePath;
+        pendingDownloads.set(taskId, pending);
+        localPath = filePath;
       }
     }
 
@@ -149,6 +149,7 @@ export async function checkSnapGenVideoStatus(taskId: string): Promise<Generated
       status,
       videoUrl,
       localPath,
+      downloadUrl: localPath ? toOutputUrl(localPath) : undefined,
       generatedAt: history.created_at || new Date().toISOString(),
       model: history.model_name || '',
     };

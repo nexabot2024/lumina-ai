@@ -25,12 +25,11 @@ interface GenerateVideoRequest {
   aspectRatio?: '16:9' | '9:16';
   resolution?: '720p' | '1080p';
   referenceImages?: string[];
-  outputFolder?: string;
 }
 
 router.post('/generate-veo', async (req: Request<{}, {}, GenerateVideoRequest>, res: Response) => {
   try {
-    const { prompt, model, duration, aspectRatio, resolution, referenceImages, outputFolder } = req.body;
+    const { prompt, model, duration, aspectRatio, resolution, referenceImages } = req.body;
 
     if (!prompt) {
       return res.status(400).json({ error: 'prompt is required' });
@@ -42,7 +41,6 @@ router.post('/generate-veo', async (req: Request<{}, {}, GenerateVideoRequest>, 
       aspectRatio,
       resolution,
       referenceImages,
-      outputFolder,
     });
 
     res.json({
@@ -86,9 +84,9 @@ router.get('/veo/status/:taskId', async (req: Request<{ taskId: string }>, res: 
   }
 });
 
-router.post('/batch-veo', async (req: Request<{}, {}, { prompts: string[]; outputFolder?: string }>, res: Response) => {
+router.post('/batch-veo', async (req: Request<{}, {}, { prompts: string[] }>, res: Response) => {
   try {
-    const { prompts, outputFolder } = req.body;
+    const { prompts } = req.body;
 
     if (!Array.isArray(prompts) || prompts.length === 0) {
       return res.status(400).json({ error: 'prompts must be a non-empty array' });
@@ -99,7 +97,7 @@ router.post('/batch-veo', async (req: Request<{}, {}, { prompts: string[]; outpu
     const videos = await Promise.all(
       prompts.map(async (prompt) => {
         try {
-          return await generateVideoSnapGen(prompt, { outputFolder });
+          return await generateVideoSnapGen(prompt, {});
         } catch (error) {
           console.error(`Failed to start video generation for prompt: ${prompt}`, error);
           return null;
@@ -247,20 +245,15 @@ interface DownloadAutoRequest {
   maxDuration?: number;
   resolution?: '720p' | '1080p' | '4k';
   quantity?: number;
-  outputFolder: string;
   sources?: ('pixabay' | 'pexels')[];
 }
 
 router.post('/download-auto', async (req: Request<{}, {}, DownloadAutoRequest>, res: Response) => {
   try {
-    const { theme, minDuration, maxDuration, resolution, quantity = 3, outputFolder, sources } = req.body;
+    const { theme, minDuration, maxDuration, resolution, quantity = 3, sources } = req.body;
 
     if (!theme) {
       return res.status(400).json({ error: 'theme is required' });
-    }
-
-    if (!outputFolder) {
-      return res.status(400).json({ error: 'outputFolder is required' });
     }
 
     // Download sincronously and return results with real durations
@@ -270,7 +263,6 @@ router.post('/download-auto', async (req: Request<{}, {}, DownloadAutoRequest>, 
       maxDuration,
       resolution,
       quantity,
-      outputFolder,
       sources,
     });
 

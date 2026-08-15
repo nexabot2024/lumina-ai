@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Scissors, Upload, X, Plus, FolderOpen, Play, Loader, Activity, Trash2, Wand2, Image as ImageIcon, Film, RotateCcw } from 'lucide-react';
+import { Scissors, Upload, X, Plus, Play, Loader, Activity, Trash2, Wand2, Image as ImageIcon, Film, RotateCcw } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import CompilationMonitor from './CompilationMonitor';
@@ -51,7 +51,6 @@ export default function ClipEditor() {
   const [isParsingInstructions, setIsParsingInstructions] = useState(false);
   const [instructionsSummary, setInstructionsSummary] = useState('');
 
-  const [outputFolder, setOutputFolder] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showMonitor, setShowMonitor] = useLocalStorageState('lumina-job-clipEditor-monitorOpen', false);
@@ -215,18 +214,6 @@ export default function ClipEditor() {
     }
   };
 
-  const handlePickFolder = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/clip-editing/pick-folder`);
-      if (response.data.success && response.data.path) {
-        setOutputFolder(response.data.path);
-        toast.success('Carpeta seleccionada');
-      }
-    } catch (err) {
-      toast.error('Error al abrir el selector de carpetas');
-    }
-  };
-
   const handleProcess = async () => {
     if (referenceItems.length === 0) {
       toast.error('Sube al menos un video o imagen de referencia');
@@ -234,10 +221,6 @@ export default function ClipEditor() {
     }
     if (!audioFile) {
       toast.error('Sube el audio de narración');
-      return;
-    }
-    if (!outputFolder) {
-      toast.error('Selecciona una carpeta de salida');
       return;
     }
     if (wantMusic && !musicFile) {
@@ -272,7 +255,6 @@ export default function ClipEditor() {
         textOverlays: wantTextOverlays
           ? textOverlays.filter(t => t.text.trim().length > 0).map(t => ({ start: t.start, end: t.end, text: t.text }))
           : [],
-        outputFolder,
         splitScenes,
         allowClipRepeat,
         transitions: { enabled: wantTransitions, type: transitionType, duration: transitionDuration },
@@ -658,26 +640,6 @@ export default function ClipEditor() {
             </button>
           </div>
         )}
-
-        {/* Output folder */}
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2">Carpeta de salida</label>
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={outputFolder}
-              readOnly
-              placeholder="Selecciona una carpeta..."
-              className="flex-1 px-3 py-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-600 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-            />
-            <button
-              onClick={handlePickFolder}
-              className="btn-secondary flex items-center gap-2 px-4 py-2"
-            >
-              <FolderOpen size={18} /> Elegir carpeta
-            </button>
-          </div>
-        </div>
 
         {/* Process button */}
         <div className="flex gap-3">

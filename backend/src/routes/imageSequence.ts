@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { join, basename } from 'path';
 import { existsSync } from 'fs';
+import { tmpdir } from 'os';
 import { v4 as uuidv4 } from 'uuid';
 import {
   assembleImageSequence,
@@ -17,6 +18,7 @@ import {
   getOrphanedImageSequenceJobs,
   getImageSequenceBatches,
 } from '../services/databaseService.js';
+import { toOutputUrl } from '../services/outputStorage.js';
 
 const router = Router();
 
@@ -33,6 +35,7 @@ interface JobStatus {
   currentPercent: number;
   currentSeconds: number;
   totalSeconds: number;
+  outputUrl?: string;
   clients: Response[];
 }
 
@@ -56,6 +59,7 @@ function broadcast(jobId: string) {
     currentPercent: job.currentPercent,
     currentSeconds: job.currentSeconds,
     totalSeconds: job.totalSeconds,
+    outputUrl: job.outputUrl,
   };
   job.clients.forEach(client => client.write(`data: ${JSON.stringify(payload)}\n\n`));
 }
@@ -78,7 +82,6 @@ function addEvent(
 interface StartRequestBody {
   jobId: string;
   imagePaths: string[];
-  outputFolder: string;
   outputFilename?: string;
   totalDurationSeconds?: number;
   perImageDuration?: number;
@@ -108,7 +111,7 @@ function runImageSequenceJob(
   job.isProcessing = true;
 
   const tempDir =
-    resume?.tempDir || join(config.outputFolder, `._tmp_batches_${uuidv4().slice(0, 8)}`);
+    resume?.tempDir || join(tmpdir(), `._tmp_batches_${uuidv4().slice(0, 8)}`);
   const totalBatches = Math.ceil(resolvedImagePaths.length / IMAGE_BATCH_SIZE);
 
   if (!resume) {
@@ -117,7 +120,6 @@ function runImageSequenceJob(
 
   const fullConfig: ImageSequenceConfig = {
     imagePaths: resolvedImagePaths,
-    outputFolder: config.outputFolder,
     outputFilename: config.outputFilename,
     totalDurationSeconds: config.totalDurationSeconds,
     perImageDuration: config.perImageDuration,
@@ -139,7 +141,11 @@ function runImageSequenceJob(
   )
     .then(outputPath => {
       const j = jobs.get(jobId);
-      if (j) j.isProcessing = false;
+      if (j) {
+        j.isProcessing = false;
+        j.outputUrl = toOutputUrl(outputPath);
+      }
+      broadcast(jobId);
       completeImageSequenceJob(jobId);
       const duration = config.totalDurationSeconds || (config.perImageDuration || 0) * resolvedImagePaths.length;
       recordVideoHistory(
@@ -210,9 +216,6 @@ router.post('/start', async (req: Request<{}, {}, StartRequestBody>, res: Respon
     if (!body.imagePaths || body.imagePaths.length === 0) {
       return res.status(400).json({ error: 'imagePaths es requerido y no puede estar vacío' });
     }
-    if (!body.outputFolder) {
-      return res.status(400).json({ error: 'outputFolder es requerido' });
-    }
     if (!body.totalDurationSeconds && !body.perImageDuration) {
       return res.status(400).json({ error: 'totalDurationSeconds o perImageDuration es requerido' });
     }
@@ -261,6 +264,7 @@ router.get('/status/:jobId', (req: Request, res: Response) => {
       currentPercent: job.currentPercent,
       currentSeconds: job.currentSeconds,
       totalSeconds: job.totalSeconds,
+      outputUrl: job.outputUrl,
     })}\n\n`
   );
 

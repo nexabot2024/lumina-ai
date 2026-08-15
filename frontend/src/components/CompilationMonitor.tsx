@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, AlertCircle, CheckCircle, Loader, X } from 'lucide-react';
+import { Activity, AlertCircle, CheckCircle, Loader, X, Download } from 'lucide-react';
 import { API_URL } from '../services/apiUrl';
 
 interface CompilationEvent {
@@ -17,6 +17,7 @@ interface CompilationState {
   totalDuration?: number;
   currentSeconds?: number;
   totalSeconds?: number;
+  outputUrl?: string;
 }
 
 function formatMinutes(seconds: number): string {
@@ -54,6 +55,7 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
         totalDuration: data.totalDuration,
         currentSeconds: data.currentSeconds,
         totalSeconds: data.totalSeconds,
+        outputUrl: data.outputUrl,
         events: (data.events || []).slice(-50).map((ev: any) => ({ ...ev, timestamp: Date.now() })),
       });
     };
@@ -192,9 +194,20 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
 
       {/* Footer */}
       {!state.isCompiling && state.events.length > 0 && (
-        <div className="bg-white dark:bg-zinc-950 border-t border-gray-100 dark:border-zinc-800 p-3">
+        <div className="bg-white dark:bg-zinc-950 border-t border-gray-100 dark:border-zinc-800 p-3 space-y-2">
           {state.events.some(e => e.type === 'error') ? (
             <div className="text-red-500 dark:text-red-400 text-xs font-semibold">❌ Compilación fallida</div>
+          ) : state.outputUrl ? (
+            <>
+              <div className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">✅ Compilación completada</div>
+              <a
+                href={`${API_URL}${state.outputUrl}`}
+                download
+                className="btn-primary w-full flex items-center justify-center gap-2 py-2 text-sm"
+              >
+                <Download className="w-4 h-4" /> Descargar video
+              </a>
+            </>
           ) : state.events.some(e => e.type === 'success') ? (
             <div className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">✅ Compilación completada</div>
           ) : (

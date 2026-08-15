@@ -1,6 +1,5 @@
 import { Router, Request, Response } from 'express';
 import { join, basename } from 'path';
-import { exec } from 'child_process';
 import { existsSync } from 'fs';
 import {
   assembleVideo,
@@ -13,6 +12,7 @@ import {
 } from '../services/clipEditingService.js';
 import { parseEditingInstructions } from '../services/editingInstructionsService.js';
 import { recordVideoHistory } from '../services/databaseService.js';
+import { toOutputUrl } from '../services/outputStorage.js';
 
 const router = Router();
 
@@ -29,6 +29,7 @@ interface JobStatus {
   currentPercent: number;
   currentSeconds: number;
   totalSeconds: number;
+  outputUrl?: string;
   clients: Response[];
 }
 
@@ -52,6 +53,7 @@ function broadcast(jobId: string) {
     currentPercent: job.currentPercent,
     currentSeconds: job.currentSeconds,
     totalSeconds: job.totalSeconds,
+    outputUrl: job.outputUrl,
   };
   job.clients.forEach(client => client.write(`data: ${JSON.stringify(payload)}\n\n`));
 }
@@ -81,7 +83,6 @@ interface ProcessRequestBody {
   subtitles: boolean;
   backgroundMusic?: BackgroundMusicConfig;
   textOverlays?: TextOverlay[];
-  outputFolder: string;
   outputFilename?: string;
   resolution?: '720p' | '1080p' | '2k' | '4k';
   fps?: number;
@@ -101,9 +102,6 @@ router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Re
     }
     if (!body.audioPath) {
       return res.status(400).json({ error: 'audioPath es requerido' });
-    }
-    if (!body.outputFolder) {
-      return res.status(400).json({ error: 'outputFolder es requerido' });
     }
 
     const jobId = body.jobId;
@@ -137,7 +135,6 @@ router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Re
       subtitles: body.subtitles,
       backgroundMusic: resolvedBackgroundMusic,
       textOverlays: body.textOverlays || [],
-      outputFolder: body.outputFolder,
       outputFilename: body.outputFilename,
       resolution: body.resolution,
       fps: body.fps,
@@ -151,7 +148,11 @@ router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Re
     assembleVideo(config, (type, message, percent, extra) => addJobEvent(jobId, type, message, percent, extra))
       .then(outputPath => {
         const j = jobStatus.get(jobId);
-        if (j) j.isProcessing = false;
+        if (j) {
+          j.isProcessing = false;
+          j.outputUrl = toOutputUrl(outputPath);
+        }
+        broadcast(jobId);
         recordVideoHistory(
           'clip-editing',
           basename(outputPath),
@@ -201,6 +202,7 @@ router.get('/status/:jobId', (req: Request, res: Response) => {
       isCompiling: job.isProcessing,
       events: job.events,
       currentPercent: job.currentPercent,
+      outputUrl: job.outputUrl,
     })}\n\n`
   );
 
@@ -248,33 +250,6 @@ router.post('/parse-instructions', async (req: Request<{}, {}, { instructions: s
       details: error instanceof Error ? error.message : 'Unknown error',
     });
   }
-});
-
-router.get('/pick-folder', async (req: Request, res: Response) => {
-  const script = `
-Add-Type -AssemblyName System.Windows.Forms
-$dialog = New-Object System.Windows.Forms.FolderBrowserDialog
-$dialog.Description = 'Selecciona la carpeta de salida para el video final'
-$result = $dialog.ShowDialog()
-if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-  Write-Output $dialog.SelectedPath
-}
-`.trim();
-
-  const command = `powershell -NoProfile -STA -Command "${script.replace(/"/g, '\\"').replace(/\n/g, '; ')}"`;
-
-  exec(command, { windowsHide: false }, (error, stdout) => {
-    if (error) {
-      return res.status(500).json({ error: 'No se pudo abrir el selector de carpetas', details: error.message });
-    }
-
-    const selectedPath = stdout.trim();
-    if (!selectedPath) {
-      return res.json({ success: false, cancelled: true });
-    }
-
-    res.json({ success: true, path: selectedPath });
-  });
 });
 
 export default router;

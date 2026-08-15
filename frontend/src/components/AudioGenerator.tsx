@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Volume2, Loader, Play, Download, Trash2, Zap, ChevronDown, Mic2, Plus, Check } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
+import { API_URL } from '../services/apiUrl';
 
 interface GeneratedAudio {
   id: string;
@@ -126,7 +127,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
       setVoicesLoading(true);
       setVoicesProgress('Conectando con la API...');
       try {
-        const response = await axios.get(`/api/audio/voices/${provider}`, {
+        const response = await axios.get(`${API_URL}/api/audio/voices/${provider}`, {
           timeout: 60000,
         });
 
@@ -155,7 +156,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
     const interval = setInterval(async () => {
       attempts++;
       try {
-        const response = await axios.get(`/api/audio/task/${taskId}`);
+        const response = await axios.get(`${API_URL}/api/audio/task/${taskId}`);
         const status = response.data.status?.status;
 
         if (status === 'done') {
@@ -184,7 +185,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
 
     setGeneratingId(index);
     try {
-      const response = await axios.post('/api/audio/generate', {
+      const response = await axios.post(`${API_URL}/api/audio/generate`, {
         text: section,
         voiceId: voice,
         speed,
@@ -210,7 +211,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
 
     setGeneratingId(-1);
     try {
-      const response = await axios.post('/api/audio/batch', {
+      const response = await axios.post(`${API_URL}/api/audio/batch`, {
         texts: filteredSections,
         voiceId: voice,
         speed,
@@ -244,7 +245,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
       const reader = new FileReader();
       reader.onload = async (e) => {
         const base64 = (e.target?.result as string).split(',')[1];
-        const response = await axios.post('/api/audio/clone', {
+        const response = await axios.post(`${API_URL}/api/audio/clone`, {
           voiceName: clonedVoiceName,
           audioFile: base64,
         });
@@ -280,7 +281,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
   };
 
   const handlePlayAudio = (taskId: string) => {
-    const audioElement = new Audio(`/api/audio/file/${taskId}`);
+    const audioElement = new Audio(`${API_URL}/api/audio/file/${taskId}`);
     audioElement.play().catch(error => {
       toast.error('El audio todavía no está listo, intenta de nuevo en unos segundos');
       console.error(error);
@@ -289,7 +290,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
 
   const handleDownloadAudio = async (taskId: string, index: number) => {
     try {
-      const response = await axios.get(`/api/audio/file/${taskId}`, {
+      const response = await axios.get(`${API_URL}/api/audio/file/${taskId}`, {
         responseType: 'blob',
       });
 
@@ -646,7 +647,7 @@ export default function AudioGenerator({ scriptSections }: AudioGeneratorProps) 
                         </p>
                       </div>
                       {audioReady.get(index) && (
-                        <audio controls className="w-full rounded-lg" src={`/api/audio/file/${audio.taskId}`} />
+                        <audio controls className="w-full rounded-lg" src={`${API_URL}/api/audio/file/${audio.taskId}`} />
                       )}
                     </div>
                   )}

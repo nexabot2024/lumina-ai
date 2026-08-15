@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import ffmpeg from 'fluent-ffmpeg';
+import { OUTPUT_DIR, toOutputUrl } from './outputStorage.js';
 
 export interface StockVideo {
   id: string;
@@ -288,7 +289,6 @@ export interface DownloadOptions {
   maxDuration?: number;
   resolution?: '720p' | '1080p' | '4k';
   quantity?: number;
-  outputFolder: string;
   sources?: ('pixabay' | 'pexels')[];
 }
 
@@ -297,6 +297,7 @@ export interface DownloadResult {
   title: string;
   source: 'pixabay' | 'pexels';
   filePath: string;
+  downloadUrl: string;
   duration: number;
   resolution: string;
   downloadedAt: string;
@@ -406,7 +407,6 @@ export async function downloadStockVideosAuto(options: DownloadOptions): Promise
       maxDuration,
       resolution = '1080p',
       quantity = 3,
-      outputFolder,
       sources = ['pixabay', 'pexels'],
     } = options;
 
@@ -459,7 +459,7 @@ export async function downloadStockVideosAuto(options: DownloadOptions): Promise
 
       try {
         const fileName = `${theme}_${video.source}_${uuidv4()}.mp4`;
-        const filePath = path.join(outputFolder, fileName);
+        const filePath = path.join(OUTPUT_DIR, fileName);
 
         console.log(
           `\n[${index + 1}/${videosToDownload.length}] Descargando: ${video.title || 'Video'}`
@@ -476,6 +476,7 @@ export async function downloadStockVideosAuto(options: DownloadOptions): Promise
           title: video.title,
           source: video.source,
           filePath,
+          downloadUrl: toOutputUrl(filePath),
           duration: realDuration,
           resolution: `${video.width}x${video.height}`,
           downloadedAt: new Date().toISOString(),

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Layers, Upload, X, FolderOpen, Play, Loader, RotateCcw, Music } from 'lucide-react';
+import { Layers, Upload, X, Play, Loader, RotateCcw, Music } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import { API_URL } from '../services/apiUrl';
@@ -65,7 +65,6 @@ export default function ImageSequenceEditor() {
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
-  const [outputFolder, setOutputFolder] = useState('');
   const [durationMode, setDurationMode] = useState<DurationMode>('total');
   const [totalHours, setTotalHours] = useState(1);
   const [perImageSeconds, setPerImageSeconds] = useState(5);
@@ -154,25 +153,9 @@ export default function ImageSequenceEditor() {
     setSyncWithAudio(false);
   };
 
-  const handlePickFolder = async () => {
-    try {
-      const response = await axios.get(`${API_URL}/api/clip-editing/pick-folder`);
-      if (response.data.success && response.data.path) {
-        setOutputFolder(response.data.path);
-        toast.success('Carpeta seleccionada');
-      }
-    } catch (error) {
-      toast.error('Error al abrir el selector de carpetas');
-    }
-  };
-
   const handleStart = async () => {
     if (images.length === 0) {
       toast.error('Sube al menos una imagen');
-      return;
-    }
-    if (!outputFolder) {
-      toast.error('Selecciona una carpeta de salida');
       return;
     }
 
@@ -182,7 +165,6 @@ export default function ImageSequenceEditor() {
       await axios.post(`${API_URL}/api/image-sequence/start`, {
         jobId: newJobId,
         imagePaths: images.map(i => i.path),
-        outputFolder,
         resolution,
         randomMode,
         ...(audioSyncActive
@@ -421,23 +403,6 @@ export default function ImageSequenceEditor() {
             <option value="2k">2K</option>
             <option value="4k">4K</option>
           </select>
-        </div>
-
-        {/* Output folder */}
-        <div className="mb-6">
-          <label className="block text-sm font-semibold mb-2 text-gray-900 dark:text-zinc-100">Carpeta de salida</label>
-          <div className="flex items-center gap-3">
-            <input
-              type="text"
-              value={outputFolder}
-              readOnly
-              placeholder="Selecciona una carpeta..."
-              className="flex-1 px-3 py-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-gray-900 dark:text-zinc-100"
-            />
-            <button onClick={handlePickFolder} disabled={!!jobId} className="btn-secondary flex items-center gap-2 px-4 py-2">
-              <FolderOpen size={18} /> Elegir carpeta
-            </button>
-          </div>
         </div>
 
         <div className="flex gap-3">

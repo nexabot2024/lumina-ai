@@ -188,7 +188,7 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
     const interval = setInterval(async () => {
       attempts++;
       try {
-        const response = await axios.get(`/api/videos/veo/status/${taskId}`);
+        const response = await axios.get(`${API_URL}/api/videos/veo/status/${taskId}`);
         const video = response.data.video;
 
         if (video.status === 'completed') {
@@ -242,7 +242,7 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
     try {
       if (isImageMode) {
         // IMAGEN - NanoBanana
-        const response = await axios.post('/api/images/generate-nanobanana', {
+        const response = await axios.post(`${API_URL}/api/images/generate-nanobanana`, {
           prompt: prompt.imagePrompt,
           model: 'nano_banana_2',
           aspectRatio: '16:9',
@@ -255,7 +255,7 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
         toast.success('🎨 Imagen generada exitosamente');
       } else {
         // VIDEO - SnapGen
-        const response = await axios.post('/api/videos/generate-veo', {
+        const response = await axios.post(`${API_URL}/api/videos/generate-veo`, {
           prompt: prompt.imagePrompt,
           outputFolder: downloadFolder,
         });
@@ -303,11 +303,11 @@ export default function ImageGenerator({ prompts }: ImageGeneratorProps) {
         // IMAGEN - NanoBanana
         payload.model = 'nano_banana_2';
         payload.referenceImages = getAllReferenceImagePaths();
-        await axios.post('/api/images/batch-nanobanana', payload);
+        await axios.post(`${API_URL}/api/images/batch-nanobanana`, payload);
         toast.success(`🎨 Generando ${selectedPrompts.length} imágenes en segundo plano`);
       } else {
         // VIDEO - SnapGen: se lanzan todos en paralelo y cada uno se rastrea por su cuenta
-        const response = await axios.post('/api/videos/batch-veo', payload);
+        const response = await axios.post(`${API_URL}/api/videos/batch-veo`, payload);
         const batchVideos = response.data.videos as any[];
 
         setImages(prev => {

@@ -26,6 +26,7 @@ import videoQueueRoutes from './routes/videoQueue.js';
 import imageSequenceRoutes from './routes/imageSequence.js';
 import historyRoutes from './routes/history.js';
 import ingredientsRoutes from './routes/ingredients.js';
+import { OUTPUT_DIR } from './services/outputStorage.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -34,9 +35,15 @@ const PORT = process.env.PORT || 5000;
 // desde otros dispositivos (ej. un Mac) en la misma red.
 const LAN_ORIGIN_PATTERN = /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}):\d+$/;
 
+// Dominio de producción (frontend en Vercel).
+const ALLOWED_ORIGINS = new Set([
+  'https://www.luminavideos.xyz',
+  'https://luminavideos.xyz',
+]);
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || LAN_ORIGIN_PATTERN.test(origin)) {
+    if (!origin || LAN_ORIGIN_PATTERN.test(origin) || ALLOWED_ORIGINS.has(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Origen no permitido por CORS'));
@@ -49,6 +56,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 app.use('/uploads', express.static(join(process.cwd(), process.env.UPLOAD_DIR || 'uploads')));
+app.use('/outputs', express.static(OUTPUT_DIR));
 
 app.use('/api/prompts', promptRoutes);
 app.use('/api/images', imageRoutes);

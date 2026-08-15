@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Video, Search, Loader, ExternalLink, Download, CheckSquare } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
+import { API_URL } from '../services/apiUrl';
 
 interface StockVideo {
   id: string;
@@ -16,6 +17,15 @@ interface StockVideo {
   type?: 'image' | 'video' | 'audio';
   license?: string;
   author?: string;
+}
+
+interface DownloadedVideo {
+  id: string;
+  title: string;
+  source: 'pixabay' | 'pexels';
+  downloadUrl: string;
+  duration: number;
+  resolution: string;
 }
 
 export default function StockVideoSearch() {
@@ -34,9 +44,9 @@ export default function StockVideoSearch() {
   const [maxDuration, setMaxDuration] = useState(60);
   const [resolution, setResolution] = useState<'720p' | '1080p' | '4k'>('1080p');
   const [quantity, setQuantity] = useState(3);
-  const [downloadFolder, setDownloadFolder] = useState('C:\\Downloads\\VidSpa\\Stock');
   const [autoSources, setAutoSources] = useState<('pixabay' | 'pexels')[]>(['pexels']);
   const [autoLoading, setAutoLoading] = useState(false);
+  const [downloadedVideos, setDownloadedVideos] = useState<DownloadedVideo[]>([]);
 
   const handleSearch = async (searchQuery?: string) => {
     const queryToUse = searchQuery || query;
@@ -52,7 +62,7 @@ export default function StockVideoSearch() {
       if (source === 'wikimedia') {
         // Búsqueda en Wikimedia Commons
         const type = searchType === 'videos' ? 'video' : 'image';
-        response = await axios.get(`/api/wikimedia/${type === 'image' ? 'images' : 'videos'}`, {
+        response = await axios.get(`${API_URL}/api/wikimedia/${type === 'image' ? 'images' : 'videos'}`, {
           params: {
             query: queryToUse,
             limit: 50,
@@ -78,7 +88,7 @@ export default function StockVideoSearch() {
         toast.success(`✨ ${results.length} archivos encontrados en Wikimedia Commons`);
       } else {
         // Búsqueda tradicional Pixabay/Pexels
-        const endpoint = searchType === 'videos' ? '/api/videos/search-videos' : '/api/videos/search-images';
+        const endpoint = searchType === 'videos' ? `${API_URL}/api/videos/search-videos` : `${API_URL}/api/videos/search-images`;
         response = await axios.post(endpoint, {
           query: queryToUse,
           source,
@@ -113,40 +123,32 @@ export default function StockVideoSearch() {
       return;
     }
 
-    if (!downloadFolder.trim()) {
-      toast.error('Especifica una carpeta de descarga');
-      return;
-    }
-
     setAutoLoading(true);
     try {
-      const response = await axios.post('/api/videos/download-auto', {
+      const response = await axios.post(`${API_URL}/api/videos/download-auto`, {
         theme: autoTheme,
         minDuration,
         maxDuration,
         resolution,
         quantity,
-        outputFolder: downloadFolder,
         sources: autoSources,
       });
 
       if (response.data.results && response.data.results.length > 0) {
-        const videosDownloaded = response.data.results.map((video: any) => ({
+        const videosDownloaded: DownloadedVideo[] = response.data.results.map((video: any) => ({
           id: video.id,
           title: video.title,
           source: video.source,
-          path: video.filePath,
+          downloadUrl: video.downloadUrl,
           duration: video.duration,
           resolution: video.resolution,
-          downloadedAt: video.downloadedAt,
         }));
 
         toast.success(
           `✅ ${videosDownloaded.length} videos descargados con duraciones reales detectadas!`
         );
 
-        // Display downloaded videos
-        setResults(videosDownloaded as any);
+        setDownloadedVideos(videosDownloaded);
       } else {
         toast.error('No se descargaron videos. Verifica los criterios.');
       }
@@ -393,21 +395,6 @@ export default function StockVideoSearch() {
             </div>
           </div>
 
-          {/* Carpeta de descarga */}
-          <div>
-            <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">
-              📁 Carpeta de Descarga
-            </label>
-            <input
-              type="text"
-              value={downloadFolder}
-              onChange={(e) => setDownloadFolder(e.target.value)}
-              placeholder="C:\Downloads\VidSpa\Stock"
-              className="w-full px-4 py-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-900 dark:text-zinc-100 placeholder-gray-400 dark:placeholder-zinc-600 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
-            />
-            <p className="text-gray-400 dark:text-zinc-500 text-[10px] mt-1">Ruta donde se guardarán los videos descargados</p>
-          </div>
-
           {/* Fuentes */}
           <div>
             <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">
@@ -456,6 +443,29 @@ export default function StockVideoSearch() {
             {autoLoading && <Loader className="w-5 h-5 animate-spin" />}
             {autoLoading ? 'Descargando...' : '⚡ Iniciar Descarga Automática'}
           </button>
+
+          {downloadedVideos.length > 0 && (
+            <div className="space-y-2 pt-2">
+              {downloadedVideos.map(video => (
+                <div
+                  key={video.id}
+                  className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-3"
+                >
+                  <span className="flex-1 text-sm text-gray-900 dark:text-zinc-100 truncate">{video.title || 'Video'}</span>
+                  <span className="text-xs text-gray-400 dark:text-zinc-500 shrink-0">
+                    {video.resolution} · {video.duration}s
+                  </span>
+                  <a
+                    href={`${API_URL}${video.downloadUrl}`}
+                    download
+                    className="flex items-center gap-1.5 text-xs font-semibold text-accent-600 dark:text-accent-400 hover:underline shrink-0"
+                  >
+                    <Download className="w-3.5 h-3.5" /> Descargar
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

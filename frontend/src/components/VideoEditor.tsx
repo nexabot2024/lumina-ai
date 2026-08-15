@@ -7,6 +7,7 @@ import FileUploader from './FileUploader';
 import FFmpegEditor from './FFmpegEditor';
 import CompilationMonitor from './CompilationMonitor';
 import { useLocalStorageState } from '../hooks/useLocalStorageState';
+import { API_URL } from '../services/apiUrl';
 
 interface TimelineAsset {
   id: string;
@@ -123,7 +124,7 @@ export default function VideoEditor() {
     }
 
     try {
-      const response = await axios.post('/api/compilation/structure-plan', {
+      const response = await axios.post(`${API_URL}/api/compilation/structure-plan`, {
         ...structureSettings,
       });
 
@@ -159,7 +160,7 @@ export default function VideoEditor() {
           return;
         }
 
-        const response = await axios.post('/api/compilation/automated', {
+        const response = await axios.post(`${API_URL}/api/compilation/automated`, {
           projectId,
           stockAssets,
           iaAssets,
@@ -171,7 +172,7 @@ export default function VideoEditor() {
         });
 
         toast.success(`✨ Video automático creado con ${response.data.summary.transitionCount} transiciones`);
-        setCompiledVideo(`/api/compilation/render?timelineId=${response.data.timeline.id}`);
+        setCompiledVideo(`${API_URL}/api/compilation/render?timelineId=${response.data.timeline.id}`);
       } else {
         // Compilación manual tradicional
         const imagePaths = assets
@@ -179,14 +180,14 @@ export default function VideoEditor() {
           .map(a => a.path);
         const audioPath = assets.find(a => a.type === 'audio')?.path || null;
 
-        const response = await axios.post('/api/compilation/from-images', {
+        const response = await axios.post(`${API_URL}/api/compilation/from-images`, {
           projectId,
           imagePaths,
           audioPath,
           options: settings,
         });
 
-        setCompiledVideo(response.data.video.path);
+        setCompiledVideo(`${API_URL}${response.data.video.path}`);
         toast.success('✨ Video compilado exitosamente');
       }
     } catch (error: any) {
