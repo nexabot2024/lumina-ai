@@ -9,6 +9,7 @@ import {
   type TransitionType,
   type AnimationType,
   type ImageSequenceConfig,
+  type SequenceItem,
 } from '../services/clipEditingService.js';
 import {
   recordVideoHistory,
@@ -81,7 +82,7 @@ function addEvent(
 
 interface StartRequestBody {
   jobId: string;
-  imagePaths: string[];
+  items: SequenceItem[];
   outputFilename?: string;
   totalDurationSeconds?: number;
   perImageDuration?: number;
@@ -104,7 +105,7 @@ interface StartRequestBody {
 function runImageSequenceJob(
   jobId: string,
   config: StartRequestBody,
-  resolvedImagePaths: string[],
+  resolvedItems: SequenceItem[],
   resume?: { tempDir: string; completedBatches: Record<number, string> }
 ) {
   const job = getOrCreateJob(jobId);
@@ -112,14 +113,14 @@ function runImageSequenceJob(
 
   const tempDir =
     resume?.tempDir || join(tmpdir(), `._tmp_batches_${uuidv4().slice(0, 8)}`);
-  const totalBatches = Math.ceil(resolvedImagePaths.length / IMAGE_BATCH_SIZE);
+  const totalBatches = Math.ceil(resolvedItems.length / IMAGE_BATCH_SIZE);
 
   if (!resume) {
     createImageSequenceJob(jobId, config, tempDir, totalBatches);
   }
 
   const fullConfig: ImageSequenceConfig = {
-    imagePaths: resolvedImagePaths,
+    items: resolvedItems,
     outputFilename: config.outputFilename,
     totalDurationSeconds: config.totalDurationSeconds,
     perImageDuration: config.perImageDuration,
@@ -147,11 +148,11 @@ function runImageSequenceJob(
       }
       broadcast(jobId);
       completeImageSequenceJob(jobId);
-      const duration = config.totalDurationSeconds || (config.perImageDuration || 0) * resolvedImagePaths.length;
+      const duration = config.totalDurationSeconds || (config.perImageDuration || 0) * resolvedItems.length;
       recordVideoHistory(
         'image-sequence',
         basename(outputPath),
-        `${resolvedImagePaths.length} imágenes`,
+        `${resolvedItems.length} elementos`,
         outputPath,
         'completed',
         Math.round(duration)
@@ -169,7 +170,7 @@ function runImageSequenceJob(
       recordVideoHistory(
         'image-sequence',
         config.outputFilename || 'secuencia-de-imagenes.mp4',
-        `${resolvedImagePaths.length} imágenes`,
+        `${resolvedItems.length} elementos`,
         '',
         'failed',
         0,
@@ -185,7 +186,7 @@ function resumeOrphanedImageSequenceJobs() {
   const orphans = getOrphanedImageSequenceJobs();
   for (const orphan of orphans) {
     try {
-      const config = JSON.parse(orphan.config) as StartRequestBody & { imagePaths: string[] };
+      const config = JSON.parse(orphan.config) as StartRequestBody & { items: SequenceItem[] };
       const batches = getImageSequenceBatches(orphan.jobId);
       const completedBatches: Record<number, string> = {};
       batches.forEach(b => {
@@ -196,7 +197,7 @@ function resumeOrphanedImageSequenceJobs() {
       console.log(
         `♻️ Retomando trabajo interrumpido de Secuencia de Imágenes: ${orphan.jobId} (${Object.keys(completedBatches).length}/${orphan.totalBatches} lotes recuperados)`
       );
-      runImageSequenceJob(orphan.jobId, config, config.imagePaths, {
+      runImageSequenceJob(orphan.jobId, config, config.items, {
         tempDir: orphan.tempDir,
         completedBatches,
       });
@@ -213,29 +214,29 @@ router.post('/start', async (req: Request<{}, {}, StartRequestBody>, res: Respon
   try {
     const body = req.body;
 
-    if (!body.imagePaths || body.imagePaths.length === 0) {
-      return res.status(400).json({ error: 'imagePaths es requerido y no puede estar vacío' });
+    if (!body.items || body.items.length === 0) {
+      return res.status(400).json({ error: 'items es requerido y no puede estar vacío' });
     }
     if (!body.totalDurationSeconds && !body.perImageDuration) {
       return res.status(400).json({ error: 'totalDurationSeconds o perImageDuration es requerido' });
     }
 
     const jobId = body.jobId;
-    const resolvedImagePaths = body.imagePaths.map(resolveUploadPath);
+    const resolvedItems = body.items.map(item => ({ ...item, path: resolveUploadPath(item.path) }));
     const resolvedAudioPath = body.audioPath ? resolveUploadPath(body.audioPath) : undefined;
-    const missingFiles = [...resolvedImagePaths, ...(resolvedAudioPath ? [resolvedAudioPath] : [])].filter(
+    const missingFiles = [...resolvedItems.map(i => i.path), ...(resolvedAudioPath ? [resolvedAudioPath] : [])].filter(
       p => !existsSync(p)
     );
     if (missingFiles.length > 0) {
       return res.status(400).json({ error: `Archivo(s) no encontrado(s): ${missingFiles.join(', ')}` });
     }
 
-    res.json({ message: 'Procesamiento iniciado', jobId, totalImages: resolvedImagePaths.length });
+    res.json({ message: 'Procesamiento iniciado', jobId, totalImages: resolvedItems.length });
 
     runImageSequenceJob(
       jobId,
-      { ...body, imagePaths: resolvedImagePaths, audioPath: resolvedAudioPath } as any,
-      resolvedImagePaths
+      { ...body, items: resolvedItems, audioPath: resolvedAudioPath } as any,
+      resolvedItems
     );
   } catch (error) {
     console.error('Error starting image sequence job:', error);

@@ -22,6 +22,32 @@
   --accent-800: 91 33 182;
   --accent-900: 76 29 149;
   --accent-950: 46 16 101;
+
+  /* Fuente del sistema — Ajustes → Personalización la sobrescribe (ver useSettings.ts).
+     Todas las opciones ya están cargadas en index.html, así que el cambio es instantáneo. */
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+
+  /* Imagen de fondo de tarjeta — Ajustes → Personalización del sistema. Vacío por
+     defecto (var sin fallback a imagen = "none"); ver useSettings.ts applyCardBgImage(). */
+  --card-bg-image: none;
+
+  /* Desenfoque de esa imagen de fondo — Ajustes → Personalización del sistema
+     (ver useSettings.ts applyCardBgBlur()). 0px = sin desenfocar. */
+  --card-bg-blur: 0px;
+
+  /* Velo de color pintado ENCIMA de la imagen de fondo (antes de que llegue el
+     contenido) para que el texto siga siendo legible sin importar cuán clara u
+     oscura sea la foto que suba el usuario — independiente del color de cada
+     tarjeta. Distinto en claro/oscuro, ver los bloques @media/.dark más abajo. */
+  --card-bg-scrim: rgba(255, 255, 255, 0.75);
+
+  /* Color del brillo del efecto 3D de los botones — Ajustes → Personalización del
+     sistema (independiente del acento, ver useSettings.ts applyBtn3dGlow()). */
+  --btn-3d-glow-rgb: 139 92 246;
+}
+
+.dark {
+  --card-bg-scrim: rgba(9, 9, 11, 0.72);
 }
 
 * {
@@ -33,8 +59,9 @@ html {
 }
 
 body {
-  @apply bg-gray-50 text-gray-900 font-sans;
+  @apply bg-gray-50 text-gray-900;
   @apply dark:bg-zinc-950 dark:text-zinc-100;
+  font-family: var(--font-sans);
 }
 
 /* Tipografía monoespaciada para prompts, parámetros y logs */
@@ -161,63 +188,431 @@ body {
   animation: materialize 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* Entrada de sección completa (Dashboard, al cambiar de herramienta): más
+   recorrido que "materialize" (desliza + difumina) para que el cambio de
+   sección se note claramente, sin llegar a ser lento. */
+@keyframes section-enter {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+    filter: blur(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+.animate-section-enter {
+  animation: section-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Entrada de paneles flotantes tipo "slide-over" (Monitor de Descarga/Compilación) */
+@keyframes panel-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.animate-panel-in {
+  animation: panel-slide-in 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Entrada individual de cada tarjeta dentro de una sección — se dispara sola
+   cada vez que la tarjeta se monta (p. ej. al cambiar de sección, ya que todo
+   su contenido se remonta). El desfase por nth-child crea un efecto de
+   cascada natural entre las tarjetas de una misma sección. */
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.card,
+.card-lg,
+.glass,
+.glass-lg {
+  animation: card-enter 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.card:nth-child(2),
+.card-lg:nth-child(2),
+.glass:nth-child(2),
+.glass-lg:nth-child(2) {
+  animation-delay: 70ms;
+}
+
+.card:nth-child(3),
+.card-lg:nth-child(3),
+.glass:nth-child(3),
+.glass-lg:nth-child(3) {
+  animation-delay: 140ms;
+}
+
+.card:nth-child(4),
+.card-lg:nth-child(4),
+.glass:nth-child(4),
+.glass-lg:nth-child(4) {
+  animation-delay: 210ms;
+}
+
+.card:nth-child(5),
+.card-lg:nth-child(5),
+.glass:nth-child(5),
+.glass-lg:nth-child(5) {
+  animation-delay: 280ms;
+}
+
 /* Núcleo IA: punto que pulsa con el acento en la barra de estado inferior */
 .orb {
   @apply rounded-full bg-accent-500;
   animation: pulse-glow 3.2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
-/* === Superficies planas === */
+/* === Superficies de tarjeta — 3 estilos seleccionables desde Ajustes → Personalización
+   (ver useSettings.ts / SettingsModal.tsx), aplicados vía [data-card-style] en <html>.
+   "tinted" es el valor por defecto si el atributo no está puesto todavía. === */
 .glass,
-.card {
-  @apply bg-white border border-gray-200 rounded-xl;
-  @apply dark:bg-zinc-900 dark:border-zinc-800;
-}
-
+.card,
 .glass-lg,
 .card-lg {
-  @apply bg-white border border-gray-200 rounded-xl p-6;
+  @apply rounded-3xl relative isolate;
+  /* Nada de overflow-hidden aquí: recortaría también el brillo/sombra que sueltan los
+     botones al pasar el cursor cerca del borde de la tarjeta (efecto 3D), dejando un
+     canto recto feo justo en el límite de la caja. Ver nota de ::before más abajo sobre
+     cómo se recorta la imagen de fondo sin necesitar overflow-hidden aquí. */
+}
+
+/* Imagen de fondo opcional (Ajustes → Personalización del sistema), en su propia capa
+   detrás de todo el contenido — en vez de mezclarla con el background-color de la
+   tarjeta vía background-blend-mode, que en modo oscuro (colores con alpha bajo) dejaba
+   la foto casi sin filtrar y rompía la legibilidad. Aquí la imagen y un velo de color
+   (--card-bg-scrim, distinto en claro/oscuro) se pintan juntos en ::before, con el
+   desenfoque opcional aplicado a las dos capas por igual (el velo, al ser un color
+   plano, no se nota desenfocado). Se recorta a sí misma con su propio border-radius +
+   overflow:hidden (en vez de heredar el overflow de la tarjeta) para no afectar el
+   brillo de los botones cercanos al borde.
+   Todo el bloque va detrás del selector [data-card-bg-image] (puesto por
+   applyCardBgImage() en useSettings.ts solo cuando el usuario eligió una imagen) — sin
+   eso, la inmensa mayoría de las tarjetas del sistema no tiene ::before en absoluto, en
+   vez de generar igualmente una capa con el velo puesto sin ninguna foto detrás, que
+   dejaba un filo doble apenas perceptible pero real en el borde de cada tarjeta. */
+[data-card-bg-image] .glass::before,
+[data-card-bg-image] .card::before,
+[data-card-bg-image] .glass-lg::before,
+[data-card-bg-image] .card-lg::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  overflow: hidden;
+  background-image: linear-gradient(var(--card-bg-scrim), var(--card-bg-scrim)), var(--card-bg-image);
+  background-size: cover;
+  background-position: center;
+  filter: blur(var(--card-bg-blur));
+  pointer-events: none;
+}
+
+.card,
+.card-gradient {
+  @apply p-7;
+}
+
+.card-lg {
+  @apply p-8;
+}
+
+.card-header {
+  @apply flex items-center gap-3.5 mb-7;
+}
+
+/* --- tinted (por defecto): superficie con tinte del acento, sin borde ni sombra --- */
+:root:not([data-card-style]) .card,
+:root:not([data-card-style]) .glass,
+:root:not([data-card-style]) .card-lg,
+:root:not([data-card-style]) .glass-lg,
+[data-card-style='tinted'] .card,
+[data-card-style='tinted'] .glass,
+[data-card-style='tinted'] .card-lg,
+[data-card-style='tinted'] .glass-lg {
+  background-color: rgb(var(--accent-50) / 1);
+}
+
+.dark:not([data-card-style]) .card,
+.dark:not([data-card-style]) .glass,
+.dark:not([data-card-style]) .card-lg,
+.dark:not([data-card-style]) .glass-lg,
+[data-card-style='tinted'].dark .card,
+[data-card-style='tinted'].dark .glass,
+[data-card-style='tinted'].dark .card-lg,
+[data-card-style='tinted'].dark .glass-lg {
+  background-color: rgb(var(--accent-950) / 0.35);
+}
+
+:root:not([data-card-style]) .card-title,
+[data-card-style='tinted'] .card-title {
+  color: rgb(var(--accent-900) / 1);
+}
+.dark:not([data-card-style]) .card-title,
+[data-card-style='tinted'].dark .card-title {
+  color: rgb(var(--accent-100) / 1);
+}
+:root:not([data-card-style]) .card-subtitle,
+[data-card-style='tinted'] .card-subtitle {
+  color: rgb(var(--accent-600) / 1);
+}
+.dark:not([data-card-style]) .card-subtitle,
+[data-card-style='tinted'].dark .card-subtitle {
+  color: rgb(var(--accent-300) / 1);
+}
+
+/* --- bordered: blanco/zinc con borde fino, sin tinte ni sombra, más sobrio --- */
+[data-card-style='bordered'] .card,
+[data-card-style='bordered'] .glass,
+[data-card-style='bordered'] .card-lg,
+[data-card-style='bordered'] .glass-lg {
+  @apply bg-white border border-gray-200;
   @apply dark:bg-zinc-900 dark:border-zinc-800;
+}
+[data-card-style='bordered'] .card-title {
+  @apply text-gray-900 dark:text-zinc-100 text-lg font-semibold tracking-normal;
+}
+[data-card-style='bordered'] .card-subtitle {
+  @apply text-gray-400 dark:text-zinc-500;
+}
+
+/* --- flat: sin caja visible, solo tipografía y espacio (estilo editorial) --- */
+[data-card-style='flat'] .card,
+[data-card-style='flat'] .glass,
+[data-card-style='flat'] .card-lg,
+[data-card-style='flat'] .glass-lg {
+  @apply bg-transparent;
+}
+/* Sin caja visible no hay dónde mostrar la imagen de fondo (se vería flotando suelta,
+   rompiendo el aspecto "sin caja" de este estilo) — se desactiva aquí a propósito. */
+[data-card-style='flat'] .card::before,
+[data-card-style='flat'] .glass::before,
+[data-card-style='flat'] .card-lg::before,
+[data-card-style='flat'] .glass-lg::before {
+  display: none;
+}
+[data-card-style='flat'] .card-title {
+  @apply text-gray-900 dark:text-zinc-100 text-xl font-bold tracking-tight;
+}
+[data-card-style='flat'] .card-subtitle {
+  @apply text-gray-400 dark:text-zinc-500;
+}
+
+/* --- vibrant: superficie tintada + forma decorativa degradada en la esquina, estilo
+   "marketing SaaS" (más decorado que las otras 3, con brillo también en los botones —
+   ver más abajo). La burbuja va detrás del contenido (z-index) y se queda DENTRO del
+   borde de la tarjeta a propósito (sin offset negativo) — así no hace falta recortarla
+   con overflow:hidden en la tarjeta, que si no también cortaría feo el brillo/sombra de
+   los botones cercanos al borde. --- */
+[data-card-style='vibrant'] .card,
+[data-card-style='vibrant'] .glass,
+[data-card-style='vibrant'] .card-lg,
+[data-card-style='vibrant'] .glass-lg {
+  background-color: rgb(var(--accent-50) / 1);
+}
+.dark[data-card-style='vibrant'] .card,
+.dark[data-card-style='vibrant'] .glass,
+.dark[data-card-style='vibrant'] .card-lg,
+.dark[data-card-style='vibrant'] .glass-lg {
+  background-color: rgb(var(--accent-950) / 0.35);
+}
+/* En ::after (::before ya lo usa la imagen de fondo, ver arriba) */
+[data-card-style='vibrant'] .card::after,
+[data-card-style='vibrant'] .glass::after,
+[data-card-style='vibrant'] .card-lg::after,
+[data-card-style='vibrant'] .glass-lg::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 140px;
+  height: 140px;
+  border-radius: 0 1.5rem 0 100%;
+  background: linear-gradient(135deg, rgb(var(--accent-300)), rgb(var(--accent-600)));
+  opacity: 0.5;
+  pointer-events: none;
+}
+[data-card-style='vibrant'] .card-header {
+  @apply relative z-10;
+}
+[data-card-style='vibrant'] .card-title {
+  color: rgb(var(--accent-900) / 1);
+}
+.dark[data-card-style='vibrant'] .card-title {
+  color: rgb(var(--accent-100) / 1);
+}
+[data-card-style='vibrant'] .card-subtitle {
+  color: rgb(var(--accent-600) / 1);
+}
+.dark[data-card-style='vibrant'] .card-subtitle {
+  color: rgb(var(--accent-300) / 1);
 }
 
 .glass-modal,
 .glass-dark {
-  @apply bg-white border border-gray-200 rounded-xl shadow-xl;
-  @apply dark:bg-zinc-900 dark:border-zinc-800;
-}
-
-.card {
-  @apply p-6;
+  @apply bg-white rounded-3xl shadow-2xl shadow-gray-900/10;
+  @apply dark:bg-zinc-900 dark:border dark:border-zinc-800/80;
 }
 
 .card-gradient {
-  @apply bg-gray-50 border border-gray-200 rounded-xl p-6;
-  @apply dark:bg-zinc-950 dark:border-zinc-800;
+  @apply rounded-3xl;
+  background-color: rgb(var(--accent-100) / 1);
 }
 
-/* Button styles */
+.dark .card-gradient {
+  background-color: rgb(var(--accent-950) / 0.5);
+}
+
+/* Button styles — color sólido y plano (sin degradado, tendencia ya pasada de moda)
+   con sombra sutil para dar profundidad, como Linear/Vercel. El secundario se tiñe con
+   el MISMO acento que las tarjetas pero un tono más marcado que ellas, para que se
+   distinga de la superficie en vez de perderse en ella (un gris neutro encima de una
+   tarjeta ya teñida de color quedaba apagado y sin definición). */
 .btn-primary {
-  @apply px-6 py-3 rounded-lg font-medium text-white;
+  @apply px-6 py-3 rounded-xl font-semibold text-white;
   @apply bg-accent-600 hover:bg-accent-700;
-  @apply dark:bg-accent-700 dark:hover:bg-accent-600;
-  @apply transition-colors active:scale-95;
-  @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  @apply dark:bg-accent-600 dark:hover:bg-accent-500;
+  @apply disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none;
 }
 
 .btn-secondary {
-  @apply px-6 py-3 rounded-lg font-medium;
-  @apply border border-gray-200 text-gray-500;
-  @apply hover:bg-gray-100 hover:text-gray-700;
-  @apply dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-200;
-  @apply transition-colors active:scale-95;
+  @apply px-6 py-3 rounded-xl font-semibold;
+  @apply bg-accent-100 text-accent-700 hover:bg-accent-200;
+  @apply dark:bg-accent-900/45 dark:text-accent-200 dark:hover:bg-accent-900/70;
   @apply disabled:opacity-50 disabled:cursor-not-allowed;
 }
 
 .btn-light {
-  @apply px-4 py-2 rounded-full font-medium;
-  @apply bg-accent-50 border border-accent-300 text-accent-700;
-  @apply dark:bg-accent-950/50 dark:border-accent-700 dark:text-accent-300;
-  @apply transition-colors;
+  @apply px-4 py-2 rounded-full font-semibold;
+  @apply bg-accent-200 text-accent-800 hover:bg-accent-300;
+  @apply dark:bg-accent-950 dark:text-accent-300 dark:hover:bg-accent-900;
+}
+
+/* Animación 3D encima de cada botón: se inclina siguiendo el cursor (rotateX/rotateY
+   fijados por JS en App.tsx vía --btn-tilt-x/--btn-tilt-y) y suelta un brillo de color
+   configurable (--btn-3d-glow-rgb, Ajustes → Personalización del sistema) al pasar el
+   ratón. shadow-sm / shadow-accent- * /25 de antes se reemplaza por este brillo porque los
+   dos compartían la misma propiedad box-shadow — no se pueden combinar. */
+.btn-primary,
+.btn-secondary,
+.btn-light {
+  --btn-tilt-x: 0deg;
+  --btn-tilt-y: 0deg;
+  --btn-lift: 0px;
+  --btn-press: 1;
+  transform: perspective(500px) rotateX(var(--btn-tilt-x)) rotateY(var(--btn-tilt-y)) translateY(var(--btn-lift)) scale(var(--btn-press));
+  transition: transform 120ms ease-out, box-shadow 200ms ease-out, background-color 200ms;
+  box-shadow: 0 1px 2px rgb(var(--btn-3d-glow-rgb) / 0.15);
+  will-change: transform;
+}
+.btn-primary:hover,
+.btn-secondary:hover,
+.btn-light:hover {
+  --btn-lift: -3px;
+  box-shadow: 0 16px 32px -10px rgb(var(--btn-3d-glow-rgb) / 0.55);
+}
+.btn-primary:active,
+.btn-secondary:active,
+.btn-light:active {
+  --btn-press: 0.96;
+  --btn-lift: -1px;
+}
+.btn-primary:disabled,
+.btn-secondary:disabled,
+.btn-light:disabled {
+  --btn-lift: 0px;
+  --btn-tilt-x: 0deg;
+  --btn-tilt-y: 0deg;
+}
+
+/* Botones en modo "vibrant": degradado en vez del plano sólido de los otros 3 estilos —
+   coherente con la burbuja decorativa de la tarjeta. El brillo/sombra ya lo pone el
+   bloque de arriba (mismo box-shadow para los 4 estilos, vía --btn-3d-glow-rgb), así que
+   aquí solo se toca el color de fondo. Solo se activa con [data-card-style='vibrant']. */
+[data-card-style='vibrant'] .btn-primary {
+  @apply bg-none bg-gradient-to-br from-accent-400 to-accent-600 hover:from-accent-300 hover:to-accent-500;
+  @apply dark:from-accent-500 dark:to-accent-700 dark:hover:from-accent-400 dark:hover:to-accent-600;
+}
+[data-card-style='vibrant'] .btn-secondary {
+  @apply bg-white text-accent-700;
+  @apply dark:bg-zinc-900 dark:text-accent-300;
+}
+
+/* Insignia de icono degradada — cabecera de cada tarjeta ("card icon"). */
+.card-icon {
+  @apply bg-gradient-to-br from-accent-500 to-accent-700 rounded-xl shadow-sm shadow-accent-600/30;
+  @apply dark:from-accent-600 dark:to-accent-800;
+}
+
+/* <select> con flecha propia en vez del control nativo del navegador — mismo
+   marco visual que los <input> del sistema (fondo, borde, foco con acento). */
+.select-field {
+  @apply appearance-none cursor-pointer bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800;
+  @apply text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%239ca3af' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  padding-right: 2.25rem;
+}
+
+/* Chip de filtro/etiqueta pulsable (búsquedas rápidas, historial, fuentes) —
+   pastilla tintada con el acento en vez del simple borde gris plano. */
+.filter-chip {
+  @apply px-3 py-1.5 text-xs font-medium rounded-full border transition-colors;
+  @apply bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-zinc-800 text-gray-500 dark:text-zinc-400;
+  @apply hover:bg-accent-50 hover:border-accent-200 hover:text-accent-700;
+  @apply dark:hover:bg-accent-950/40 dark:hover:border-accent-800 dark:hover:text-accent-300;
+}
+
+.filter-chip-active {
+  @apply bg-accent-50 dark:bg-accent-950/50 border-accent-300 dark:border-accent-700 text-accent-700 dark:text-accent-300;
+}
+
+/* Carga en esqueleto (shimmer) — reemplaza texto plano de "Cargando..." */
+.skeleton {
+  @apply bg-gray-200 dark:bg-zinc-800 rounded-lg relative overflow-hidden;
+}
+
+.skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background-image: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.4), transparent);
+  animation: shimmer-sweep 1.6s infinite;
+}
+
+.dark .skeleton::after {
+  background-image: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.06), transparent);
+}
+
+@keyframes shimmer-sweep {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* Estado vacío: icono grande en chip suave + texto, en vez de solo texto gris */
+.empty-state-icon {
+  @apply w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4;
+  @apply bg-accent-50 text-accent-400 dark:bg-accent-950/40 dark:text-accent-600;
 }
 
 /* Slider (range) reutilizable */

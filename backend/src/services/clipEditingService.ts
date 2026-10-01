@@ -17,8 +17,10 @@ async function writeFilterScript(filterString: string): Promise<string> {
   return scriptPath;
 }
 
-const ffmpegPath = process.env.FFMPEG_PATH || 'C:\\ffmpeg\\bin\\ffmpeg.exe';
-const ffprobePath = process.env.FFPROBE_PATH || 'C:\\ffmpeg\\bin\\ffprobe.exe';
+// En Windows se conserva la instalación local existente; en macOS/Linux se usa el
+// binario disponible en PATH (por ejemplo, instalado con `brew install ffmpeg`).
+const ffmpegPath = process.env.FFMPEG_PATH || (process.platform === 'win32' ? 'C:\\ffmpeg\\bin\\ffmpeg.exe' : 'ffmpeg');
+const ffprobePath = process.env.FFPROBE_PATH || (process.platform === 'win32' ? 'C:\\ffmpeg\\bin\\ffprobe.exe' : 'ffprobe');
 
 if (existsSync(ffmpegPath)) ffmpeg.setFfmpegPath(ffmpegPath);
 if (existsSync(ffprobePath)) ffmpeg.setFfprobePath(ffprobePath);
@@ -26,6 +28,8 @@ if (existsSync(ffprobePath)) ffmpeg.setFfprobePath(ffprobePath);
 export interface SceneBoundary {
   start: number;
   end: number;
+  /** Factor de cámara lenta aplicado en el render (ver syncTimelineToAudio); 1 = sin cambio. */
+  speedFactor?: number;
 }
 
 export interface TimelineSegment {
@@ -33,6 +37,8 @@ export interface TimelineSegment {
   start: number;
   end: number;
   isImage?: boolean;
+  /** Factor de cámara lenta aplicado en el render (ver syncTimelineToAudio); 1 = sin cambio. */
+  speedFactor?: number;
 }
 
 export interface TextOverlay {
@@ -72,10 +78,27 @@ export interface ProcessConfig {
   backgroundMusic?: BackgroundMusicConfig;
   textOverlays?: TextOverlay[];
   outputFilename?: string;
+  /**
+   * Imágenes/clips de relleno: si el contenido principal queda más corto que el audio,
+   * se usan primero para llenar ese hueco (en vez de solo repetir clips ya usados); si
+   * aun así falta tiempo, se estira levemente el ritmo del conjunto (cámara lenta) y solo
+   * como último recurso se repite lo mínimo indispensable.
+   */
+  complementaryPaths?: string[];
+  complementarySourceTypes?: Array<'video' | 'image'>;
+  complementaryImageDurations?: number[];
   resolution?: '720p' | '1080p' | '2k' | '4k';
   fps?: number;
   splitScenes?: boolean;
   allowClipRepeat?: boolean;
+  /**
+   * Al desagrupar en escenas, mezcla los fragmentos por todo el video (en vez de solo
+   * intercambiar cada par de vecinos). Da un resultado más distinto del original —
+   * ideal para nichos genéricos donde no importa que el video ya no siga el ritmo
+   * exacto de la narración. Desactivado, el intercambio de vecinos mantiene cada
+   * fragmento cerca de su posición original, para cuando sí importa la sincronización.
+   */
+  fullShuffle?: boolean;
   transitions?: TransitionConfig;
   animations?: AnimationConfig;
   maxClipDuration?: number;
@@ -416,6 +439,24 @@ export function reorderClips<T>(clips: T[]): T[] {
 }
 
 /**
+ * Baraja el orden de los clips de punta a punta (Fisher-Yates) — a diferencia de
+ * reorderClips (que solo intercambia parejas vecinas), esto dispersa fragmentos de
+ * una misma toma continua por todo el video en vez de dejarlos adyacentes. Con el
+ * umbral sensible de detección de escenas, una sola toma seguida se puede partir en
+ * fragmentos casi idénticos — dejarlos vecinos (como hace el intercambio de pares)
+ * se ve como si el clip se repitiera; dispersarlos por todo el video no. Sigue siendo
+ * una permutación pura: no se pierde ni se duplica ningún clip.
+ */
+export function shuffleClips<T>(clips: T[]): T[] {
+  const result = [...clips];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+}
+
+/**
  * Subdivide cualquier clip que supere maxDuration en trozos iguales, ninguno mayor a maxDuration.
  */
 export function applyMaxClipDuration(boundaries: SceneBoundary[], maxDuration?: number): SceneBoundary[] {
@@ -446,7 +487,8 @@ export async function buildTimeline(
   splitScenes: boolean = true,
   maxClipDuration?: number,
   onEvent?: EventCallback,
-  sourceTypes?: Array<'video' | 'image'>
+  sourceTypes?: Array<'video' | 'image'>,
+  fullShuffle: boolean = false
 ): Promise<{ segments: TimelineSegment[]; perVideoBoundaries: SceneBoundary[][] }> {
   const perVideoBoundaries: SceneBoundary[][] = [];
   for (let vi = 0; vi < videoPaths.length; vi++) {
@@ -477,7 +519,7 @@ export async function buildTimeline(
       }
     }
 
-    perVideoBoundaries.push(reorderClips(boundaries));
+    perVideoBoundaries.push(fullShuffle ? shuffleClips(boundaries) : reorderClips(boundaries));
   }
 
   const segments: TimelineSegment[] = [];
@@ -516,23 +558,46 @@ export async function buildTimeline(
   return { segments, perVideoBoundaries };
 }
 
-export function syncTimelineToAudio<T extends { start: number; end: number }>(
+// Tope de cámara lenta al estirar contenido corto para llenar el audio: por encima de
+// esto ya se nota artificial, así que se prefiere repetir el mínimo indispensable en
+// vez de ralentizar más allá de este factor.
+const MAX_STRETCH_FACTOR = 1.5;
+
+export function syncTimelineToAudio<T extends { start: number; end: number; speedFactor?: number }>(
   segments: T[],
   audioDuration: number,
   allowRepeat: boolean = true
-): { segments: T[]; repeated: boolean; trimmed: boolean } {
-  if (segments.length === 0) return { segments, repeated: false, trimmed: false };
+): { segments: T[]; repeated: boolean; trimmed: boolean; stretched: boolean } {
+  if (segments.length === 0) return { segments, repeated: false, trimmed: false, stretched: false };
 
-  const originalTotal = segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+  const effDuration = (seg: T) => (seg.end - seg.start) * (seg.speedFactor ?? 1);
+  const originalTotal = segments.reduce((s, seg) => s + effDuration(seg), 0);
   let result = [...segments];
   let total = originalTotal;
+  let stretched = false;
   let repeated = false;
 
-  if (allowRepeat) {
-    while (total < audioDuration - 0.05) {
-      result = [...result, ...segments];
-      total += originalTotal;
-      repeated = true;
+  if (originalTotal > 0 && total < audioDuration - 0.05) {
+    // Antes esto repetía el timeline completo desde el inicio para llenar el hueco,
+    // duplicando visiblemente los mismos clips/imágenes. En vez de eso, primero se
+    // estira levemente la velocidad de reproducción (más tiempo real con el mismo
+    // contenido, sin repetir nada) hasta MAX_STRETCH_FACTOR — esto se intenta siempre,
+    // sin importar `allowRepeat`, porque no duplica ningún recurso. Solo si ni así
+    // alcanza, y `allowRepeat` lo permite, se repite lo mínimo indispensable como
+    // último recurso.
+    const neededFactor = audioDuration / originalTotal;
+    const appliedFactor = Math.min(neededFactor, MAX_STRETCH_FACTOR);
+    result = result.map(seg => ({ ...seg, speedFactor: (seg.speedFactor ?? 1) * appliedFactor }));
+    total = originalTotal * appliedFactor;
+    stretched = appliedFactor > 1.001;
+
+    if (allowRepeat && total < audioDuration - 0.05) {
+      const stretchedBase = result;
+      while (total < audioDuration - 0.05) {
+        result = [...result, ...stretchedBase];
+        total += originalTotal * appliedFactor;
+        repeated = true;
+      }
     }
   }
 
@@ -541,14 +606,15 @@ export function syncTimelineToAudio<T extends { start: number; end: number }>(
     let acc = 0;
     const trimmedSegments: T[] = [];
     for (const seg of result) {
-      const segDuration = seg.end - seg.start;
+      const segDuration = effDuration(seg);
       if (acc + segDuration <= audioDuration) {
         trimmedSegments.push(seg);
         acc += segDuration;
       } else {
         const remaining = audioDuration - acc;
         if (remaining > 0.05) {
-          trimmedSegments.push({ ...seg, end: seg.start + remaining });
+          const factor = seg.speedFactor ?? 1;
+          trimmedSegments.push({ ...seg, end: seg.start + remaining / factor });
           acc += remaining;
         }
         trimmed = true;
@@ -558,7 +624,7 @@ export function syncTimelineToAudio<T extends { start: number; end: number }>(
     result = trimmedSegments;
   }
 
-  return { segments: result, repeated, trimmed };
+  return { segments: result, repeated, trimmed, stretched };
 }
 
 function buildSegmentFilter(
@@ -571,9 +637,14 @@ function buildSegmentFilter(
 ): string {
   const duration = Math.max(0.1, seg.end - seg.start);
   const base = `[${seg.inputIndex}:v]trim=start=${seg.start.toFixed(3)}:end=${seg.end.toFixed(3)},setpts=PTS-STARTPTS`;
+  // Cámara lenta leve para estirar la duración real de salida sin repetir contenido (ver
+  // syncTimelineToAudio) — se aplica siempre al final de la cadena, después de cualquier
+  // animación, para no alterar el cálculo de frames del zoompan/paneo (que se basa en la
+  // duración original del clip).
+  const stretch = seg.speedFactor && seg.speedFactor > 1.001 ? `,setpts=PTS*${seg.speedFactor.toFixed(4)}` : '';
 
   if (!animation?.enabled || animation.type === 'none') {
-    return `${base},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black[${label}]`;
+    return `${base},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black${stretch}[${label}]`;
   }
 
   if (animation.type === 'zoomin' || animation.type === 'zoomout') {
@@ -588,7 +659,7 @@ function buildSegmentFilter(
       animation.type === 'zoomin'
         ? `1+(${targetZoom}-1)*on/${frames}`
         : `${targetZoom}-(${targetZoom}-1)*on/${frames}`;
-    return `${base},scale=${width * 2}:${height * 2}:force_original_aspect_ratio=decrease,pad=${width * 2}:${height * 2}:(ow-iw)/2:(oh-ih)/2:black,zoompan=z='${zoomExpr}':d=${frames}:s=${width}x${height}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'[${label}]`;
+    return `${base},scale=${width * 2}:${height * 2}:force_original_aspect_ratio=decrease,pad=${width * 2}:${height * 2}:(ow-iw)/2:(oh-ih)/2:black,zoompan=z='${zoomExpr}':d=${frames}:s=${width}x${height}:fps=${fps}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'${stretch}[${label}]`;
   }
 
   // pan: paneo diagonal (no lateral puro) a lo largo de toda la duración exacta,
@@ -597,7 +668,7 @@ function buildSegmentFilter(
   const panHeight = Math.round(height * 1.1);
   const maxDx = panWidth - width;
   const maxDy = panHeight - height;
-  return `${base},scale=${panWidth}:${panHeight}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='${maxDx}*t/${duration.toFixed(3)}':y='${maxDy}*t/${duration.toFixed(3)}'[${label}]`;
+  return `${base},scale=${panWidth}:${panHeight}:force_original_aspect_ratio=increase,crop=${width}:${height}:x='${maxDx}*t/${duration.toFixed(3)}':y='${maxDy}*t/${duration.toFixed(3)}'${stretch}[${label}]`;
 }
 
 /**
@@ -664,7 +735,7 @@ function buildConcatOrTransition(
   transitions: TransitionConfig | undefined
 ): { filterLines: string[]; outputLabel: string; finalDuration: number } {
   const n = syncedSegments.length;
-  const durations = syncedSegments.map(s => s.end - s.start);
+  const durations = syncedSegments.map(s => (s.end - s.start) * (s.speedFactor ?? 1));
   const filterLines: string[] = [];
 
   if (!transitions?.enabled || n < 2) {
@@ -806,54 +877,103 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
     fps = 30,
     splitScenes = true,
     allowClipRepeat = true,
+    fullShuffle = false,
     transitions: rawTransitions,
     animations,
     maxClipDuration,
+    complementaryPaths = [],
+    complementarySourceTypes,
+    complementaryImageDurations = [],
   } = config;
 
   const { width, height } = RESOLUTION_MAP[resolution];
 
-  let effectiveVideoPaths = videoPaths;
   const tempImageClips: string[] = [];
   let tempImageDir: string | undefined;
 
-  const imageIndices = sourceTypes
-    ? sourceTypes.reduce<number[]>((acc, t, i) => (t === 'image' ? [...acc, i] : acc), [])
-    : [];
+  // Convierte cada imagen de referencia en un clip animado (zoom/paneo) de la duración
+  // pedida; los videos pasan sin tocar. Se reutiliza tanto para el contenido principal
+  // como para el complementario — ambos son "referencias" en el mismo sentido.
+  // isQsvAvailable() ya memoiza su resultado, así que llamarla varias veces no repite el sondeo.
+  async function preRenderImageRefs(
+    paths: string[],
+    types: Array<'video' | 'image'> | undefined,
+    durations: number[],
+    label: string
+  ): Promise<string[]> {
+    const imageIdx = types
+      ? types.reduce<number[]>((acc, t, i) => (t === 'image' ? [...acc, i] : acc), [])
+      : [];
+    if (imageIdx.length === 0) return paths;
 
-  if (imageIndices.length > 0) {
-    onEvent?.('info', `🖼️ Generando ${imageIndices.length} clip(s) animado(s) a partir de imágenes de referencia (zoom + movimiento)...`);
+    onEvent?.('info', `🖼️ Generando ${imageIdx.length} clip(s) animado(s) a partir de ${label} (zoom + movimiento)...`);
     const qsvAvailable = await isQsvAvailable();
-    tempImageDir = join(tmpdir(), `vidspa-ref-images-${uuidv4().slice(0, 8)}`);
-    await fs.mkdir(tempImageDir, { recursive: true });
+    if (!tempImageDir) {
+      tempImageDir = join(tmpdir(), `vidspa-ref-images-${uuidv4().slice(0, 8)}`);
+      await fs.mkdir(tempImageDir, { recursive: true });
+    }
 
-    const rendered = [...videoPaths];
-    for (let i = 0; i < imageIndices.length; i++) {
-      const idx = imageIndices[i];
-      const duration = Math.min(MAX_IMAGE_CLIP_DURATION, Math.max(1, imageDurations[idx] ?? 5));
+    const rendered = [...paths];
+    for (let i = 0; i < imageIdx.length; i++) {
+      const idx = imageIdx[i];
+      const duration = Math.min(MAX_IMAGE_CLIP_DURATION, Math.max(1, durations[idx] ?? 5));
       const animType: AnimationType =
         animations?.enabled && animations.type !== 'none'
           ? animations.type
           : DEFAULT_ANIMATION_CYCLE[idx % DEFAULT_ANIMATION_CYCLE.length];
       const clipPath = join(tempImageDir, `ref-image-${idx}-${uuidv4().slice(0, 8)}.mp4`);
-      onEvent?.('progress', `🖼️ Renderizando imagen ${i + 1}/${imageIndices.length} (${duration}s, ${animType})...`);
-      await renderImageClip(videoPaths[idx], duration, clipPath, width, height, fps, animType, qsvAvailable);
+      onEvent?.('progress', `🖼️ Renderizando imagen ${i + 1}/${imageIdx.length} de ${label} (${duration}s, ${animType})...`);
+      await renderImageClip(paths[idx], duration, clipPath, width, height, fps, animType, qsvAvailable);
       rendered[idx] = clipPath;
       tempImageClips.push(clipPath);
     }
-    effectiveVideoPaths = rendered;
+    return rendered;
   }
 
+  let effectiveVideoPaths = await preRenderImageRefs(videoPaths, sourceTypes, imageDurations, 'imágenes de referencia');
+
   onEvent?.('info', splitScenes ? '🔍 Detectando escenas y construyendo timeline...' : '📋 Usando videos completos (sin dividir escenas)...');
-  const { segments } = await buildTimeline(effectiveVideoPaths, splicePoints, splitScenes, maxClipDuration, onEvent, sourceTypes);
+  let { segments } = await buildTimeline(effectiveVideoPaths, splicePoints, splitScenes, maxClipDuration, onEvent, sourceTypes, fullShuffle);
+
+  const audioDuration = await getDuration(audioPath);
+
+  // Si el contenido principal queda más corto que el audio, se usa primero el material
+  // complementario (una vez, completo) para llenar ese hueco; syncTimelineToAudio de más
+  // abajo se encarga de repetir todo el conjunto (principal + complementario) si aun así
+  // sigue faltando tiempo, y de recortar si sobra.
+  if (complementaryPaths.length > 0) {
+    const mainTotal = segments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+    if (mainTotal < audioDuration - 0.05) {
+      const effectiveComplementaryPaths = await preRenderImageRefs(
+        complementaryPaths,
+        complementarySourceTypes,
+        complementaryImageDurations,
+        'material complementario'
+      );
+      const { segments: complementarySegments } = await buildTimeline(
+        effectiveComplementaryPaths,
+        [],
+        false,
+        undefined,
+        onEvent,
+        complementarySourceTypes
+      );
+      const offset = effectiveVideoPaths.length;
+      segments = [
+        ...segments,
+        ...complementarySegments.map(seg => ({ ...seg, inputIndex: seg.inputIndex + offset })),
+      ];
+      effectiveVideoPaths = [...effectiveVideoPaths, ...effectiveComplementaryPaths];
+      onEvent?.('info', `🎞️ Se agregó material complementario (${effectiveComplementaryPaths.length} archivo(s)) para llenar el tiempo restante`);
+    }
+  }
+
   onEvent?.(
     'info',
     maxClipDuration
       ? `📋 ${segments.length} clips en el timeline (máx. ${maxClipDuration}s por clip)`
       : `📋 ${segments.length} clips en el timeline`
   );
-
-  const audioDuration = await getDuration(audioPath);
 
   // Encadenar xfade entre muchos clips escala mal en FFmpeg (el grafo de filtros puede
   // tardar minutos/horas en inicializarse). Por encima de este umbral, se desactiva sola.
@@ -879,12 +999,13 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
       if (converged) break;
     }
   }
-  const { segments: syncedSegments, repeated, trimmed } = syncResult;
+  const { segments: syncedSegments, repeated, trimmed, stretched } = syncResult;
 
-  if (repeated) onEvent?.('warning', '🔁 Video más corto que el audio: se repitieron clips para sincronizar');
+  if (stretched) onEvent?.('info', '🎞️ Contenido más corto que el audio: se estiró levemente el ritmo (cámara lenta) para llenar el tiempo sin repetir clips ni imágenes');
+  if (repeated) onEvent?.('warning', '🔁 Aun estirando al máximo el contenido sigue siendo más corto que el audio: se repitió lo mínimo indispensable para sincronizar');
   if (trimmed) onEvent?.('warning', '✂️ Video más largo que el audio: se recortó para sincronizar');
   if (!allowClipRepeat && !repeated) {
-    const total = syncedSegments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+    const total = syncedSegments.reduce((s, seg) => s + (seg.end - seg.start) * (seg.speedFactor ?? 1), 0);
     if (total < audioDuration - 0.5) {
       onEvent?.('warning', `⚠️ El video (${total.toFixed(1)}s) queda más corto que el audio (${audioDuration.toFixed(1)}s) porque desactivaste la repetición de clips`);
     }
@@ -969,7 +1090,7 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
       batches.push(syncedSegments.slice(i, i + REORDER_BATCH_SIZE));
     }
 
-    const totalSegDuration = syncedSegments.reduce((s, seg) => s + (seg.end - seg.start), 0);
+    const totalSegDuration = syncedSegments.reduce((s, seg) => s + (seg.end - seg.start) * (seg.speedFactor ?? 1), 0);
     const batchPaths: string[] = [];
     let processedSeconds = 0;
 
@@ -988,7 +1109,7 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
         animations,
       });
       batchPaths.push(batchPath);
-      processedSeconds += batches[b].reduce((s, seg) => s + (seg.end - seg.start), 0);
+      processedSeconds += batches[b].reduce((s, seg) => s + (seg.end - seg.start) * (seg.speedFactor ?? 1), 0);
     }
 
     mergedVideoPath = join(tempBatchDir, 'merged.mp4');
@@ -1037,7 +1158,11 @@ export async function assembleVideo(config: ProcessConfig, onEvent?: EventCallba
     audioMapArg = '[aout]'; // filter label, needs brackets
   }
 
-  const finalDuration = Math.min(audioDuration, transitionedDuration);
+  // Antes se usaba Math.min(audioDuration, transitionedDuration) como salvaguarda, pero con
+  // "Repetir clips si hace falta" desactivado el video puede quedar más corto a propósito —
+  // ese min() recortaba también el AUDIO a la duración del video, cortando la narración. El
+  // video simplemente se queda congelado en su último fotograma mientras el audio termina.
+  const finalDuration = audioDuration;
 
   // Sin subtítulos ni overlays de texto, el video del merge ya quedó en el formato final
   // (H.264/yuv420p): se copia el stream de video en vez de recodificarlo de nuevo.
@@ -1134,8 +1259,12 @@ async function renderReorderBatch(
 
   const filterParts: string[] = [];
   batchBoundaries.forEach((b, i) => {
+    // Cámara lenta leve para llenar el audio de narración sin repetir clips (ver
+    // syncTimelineToAudio) — no coexiste con hasAudio: cuando hay audio de sincronización
+    // (el único caso donde se aplica speedFactor) el audio original del video se descarta.
+    const stretch = b.speedFactor && b.speedFactor > 1.001 ? `,setpts=PTS*${b.speedFactor.toFixed(4)}` : '';
     filterParts.push(
-      `[0:v]trim=start=${b.start.toFixed(3)}:end=${b.end.toFixed(3)},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black[v${i}]`
+      `[0:v]trim=start=${b.start.toFixed(3)}:end=${b.end.toFixed(3)},setpts=PTS-STARTPTS,scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black${stretch}[v${i}]`
     );
     if (hasAudio) {
       filterParts.push(`[0:a]atrim=start=${b.start.toFixed(3)}:end=${b.end.toFixed(3)},asetpts=PTS-STARTPTS[a${i}]`);
@@ -1190,6 +1319,14 @@ export async function reorderVideoOnly(
   options: {
     maxClipDuration?: number;
     splitScenes?: boolean;
+    /**
+     * Al desagrupar en escenas, mezcla los fragmentos por todo el video (en vez de solo
+     * intercambiar cada par de vecinos). Da un resultado más distinto del original —
+     * ideal para nichos genéricos donde no importa que el video ya no siga el ritmo
+     * exacto de la narración. Desactivado, el intercambio de vecinos mantiene cada
+     * fragmento cerca de su posición original, para cuando sí importa la sincronización.
+     */
+    fullShuffle?: boolean;
     resolution?: '720p' | '1080p' | '2k' | '4k';
     fps?: number;
     /**
@@ -1199,14 +1336,20 @@ export async function reorderVideoOnly(
      * exactamente en la duración de este audio.
      */
     audioPath?: string;
+    /** Imágenes adicionales que se insertan automáticamente sobre el montaje final. */
+    insertImagePaths?: string[];
+    animateInsertedImages?: boolean;
   } = {},
   onEvent?: EventCallback
 ): Promise<string> {
   const maxClipDuration = options.maxClipDuration;
   const splitScenes = options.splitScenes ?? false;
+  const fullShuffle = options.fullShuffle ?? false;
   const { width, height } = RESOLUTION_MAP[options.resolution || '1080p'];
   const fps = options.fps || 30;
   const syncAudioPath = options.audioPath;
+  const insertImagePaths = options.insertImagePaths || [];
+  const animateInsertedImages = !!options.animateInsertedImages;
 
   await cleanupOldCacheFiles();
   const compatibleVideoPath = await ensureH264Compatible(videoPath, onEvent);
@@ -1230,27 +1373,35 @@ export async function reorderVideoOnly(
   if (maxClipDuration) {
     boundaries = applyMaxClipDuration(boundaries, maxClipDuration);
   }
-  boundaries = reorderClips(boundaries);
+  // fullShuffle mezcla los fragmentos por todo el video (mejor para contenido genérico
+  // sin necesidad de sincronía visual con la narración); desactivado, se mantiene el
+  // intercambio de pares vecinos (cada fragmento se queda cerca de su posición
+  // original, útil cuando sí importa la sincronización). Ambos son permutaciones puras:
+  // ningún clip se pierde ni se duplica.
+  if (splitScenes) {
+    boundaries = fullShuffle ? shuffleClips(boundaries) : reorderClips(boundaries);
+  }
 
   let syncAudioDuration: number | undefined;
   if (syncAudioPath) {
     syncAudioDuration = await getDuration(syncAudioPath);
-    const { segments: synced, repeated, trimmed } = syncTimelineToAudio(boundaries, syncAudioDuration, true);
+    const { segments: synced, trimmed, stretched } = syncTimelineToAudio(boundaries, syncAudioDuration, false);
     boundaries = synced;
-    if (repeated) onEvent?.('warning', '🔁 Video más corto que el audio: se repitieron clips para sincronizar');
+    if (stretched) onEvent?.('info', '🎞️ Video más corto que el audio: se estiró levemente el ritmo (cámara lenta) para llenar el tiempo sin repetir clips');
     if (trimmed) onEvent?.('warning', '✂️ Video más largo que el audio: se recortó para sincronizar');
   }
 
+  const reorderLabel = fullShuffle ? 'mezclados por todo el video' : 'reordenados';
   onEvent?.(
     'info',
     maxClipDuration
-      ? `📋 ${boundaries.length} fragmentos de máx. ${maxClipDuration}s, reordenados`
-      : `📋 ${boundaries.length} fragmentos, reordenados`
+      ? `📋 ${boundaries.length} fragmentos de máx. ${maxClipDuration}s, desagrupados y ${reorderLabel} (sin repetir ninguno)`
+      : `📋 ${boundaries.length} fragmentos desagrupados y ${reorderLabel} (sin repetir ninguno)`
   );
 
   const base = basename(videoPath, extname(videoPath));
   const outputPath = join(OUTPUT_DIR, `${base}-reordenado-${uuidv4().slice(0, 8)}.mp4`);
-  const finalDuration = boundaries.reduce((s, b) => s + (b.end - b.start), 0);
+  const finalDuration = boundaries.reduce((s, b) => s + (b.end - b.start) * (b.speedFactor ?? 1), 0);
 
   const tempDir = join(tmpdir(), `._tmp_reorder_${uuidv4().slice(0, 8)}`);
   await fs.mkdir(tempDir, { recursive: true });
@@ -1279,19 +1430,37 @@ export async function reorderVideoOnly(
         qsvAvailable,
       });
       batchPaths.push(batchPath);
-      processedSeconds += batches[b].reduce((s, seg) => s + (seg.end - seg.start), 0);
+      processedSeconds += batches[b].reduce((s, seg) => s + (seg.end - seg.start) * (seg.speedFactor ?? 1), 0);
     }
 
     if (syncAudioPath) {
       const videoOnlyPath = join(tempDir, `video-only-${uuidv4().slice(0, 8)}.mp4`);
       onEvent?.('info', '🔗 Uniendo lotes...', 92, { currentSeconds: finalDuration, totalSeconds: finalDuration });
       await concatBatches(batchPaths, videoOnlyPath);
+      let videoForMux = videoOnlyPath;
+      let overlaidVideoPath: string | undefined;
+      if (insertImagePaths.length > 0) {
+        overlaidVideoPath = join(tempDir, `video-insert-images-${uuidv4().slice(0, 8)}.mp4`);
+        await overlayInsertImages(videoOnlyPath, insertImagePaths, overlaidVideoPath, width, height, fps, onEvent, animateInsertedImages);
+        videoForMux = overlaidVideoPath;
+      }
       onEvent?.('info', '🎵 Sincronizando audio...', 97, { currentSeconds: finalDuration, totalSeconds: finalDuration });
-      await muxReplaceAudio(videoOnlyPath, syncAudioPath, outputPath);
+      // Sin repetir clips (ver syncTimelineToAudio más arriba), el video puede quedar más
+      // corto que la narración — cutToShortest=false para que el audio no se corte también,
+      // y así el usuario pueda oír la narración completa y rellenar el resto a mano.
+      await muxReplaceAudio(videoForMux, syncAudioPath, outputPath, false);
       await fs.unlink(videoOnlyPath).catch(() => {});
+      if (overlaidVideoPath) await fs.unlink(overlaidVideoPath).catch(() => {});
     } else {
       onEvent?.('info', '🔗 Uniendo lotes...', 95, { currentSeconds: finalDuration, totalSeconds: finalDuration });
-      await concatBatches(batchPaths, outputPath);
+      if (insertImagePaths.length > 0) {
+        const assembledPath = join(tempDir, `assembled-${uuidv4().slice(0, 8)}.mp4`);
+        await concatBatches(batchPaths, assembledPath);
+        await overlayInsertImages(assembledPath, insertImagePaths, outputPath, width, height, fps, onEvent, animateInsertedImages);
+        await fs.unlink(assembledPath).catch(() => {});
+      } else {
+        await concatBatches(batchPaths, outputPath);
+      }
     }
 
     onEvent?.('success', `✅ Completado: ${outputPath}`, 100, {
@@ -1308,8 +1477,37 @@ export async function reorderVideoOnly(
   }
 }
 
+export interface TextOverlayItem {
+  text: string;
+  /** Segundos relativos al INICIO de este item (no del video final ya compuesto). */
+  startSec: number;
+  endSec: number;
+  position: 'centro' | 'arriba' | 'abajo';
+  fontSize?: number;
+}
+
+export interface ShapeOverlayItem {
+  shape: 'rectangulo';
+  startSec: number;
+  endSec: number;
+  position: 'centro' | 'arriba' | 'abajo';
+  color?: string;
+}
+
+export interface SequenceItem {
+  path: string;
+  /** Un video se usa sin su audio original (silencioso) y en bucle si es más corto que su duración asignada. */
+  type: 'image' | 'video';
+  /** Fija la animación de este item (en vez de la rotación/azar automática) — viene de una
+   * instrucción "item N zoom=..." (ver instructionsParser.ts). */
+  animationOverride?: AnimationType;
+  /** Overlays de texto/forma sobre este item — mismas instrucciones "item N texto=.../forma=...". */
+  textOverlays?: TextOverlayItem[];
+  shapeOverlays?: ShapeOverlayItem[];
+}
+
 export interface ImageSequenceConfig {
-  imagePaths: string[];
+  items: SequenceItem[];
   outputFilename?: string;
   totalDurationSeconds?: number;
   perImageDuration?: number;
@@ -1325,6 +1523,21 @@ export interface ImageSequenceConfig {
    */
   randomMode?: boolean;
   /**
+   * Duración ya calculada por item (mismo orden que `items`) — si viene, se usa tal cual
+   * en vez de llamar a generateImageDurations() internamente. Para cuando el llamador ya
+   * necesitó esa duración ANTES de invocar esta función (ej. Composición con Remotion,
+   * que la usa para "desagrupar" un item de video a la duración exacta que le toca antes
+   * de pasarlo aquí) — recalcularla de nuevo aquí sería inconsistente en modo aleatorio
+   * (dos llamadas a Math.random() no dan el mismo resultado).
+   */
+  explicitDurationsSeconds?: number[];
+  /**
+   * Fija la transición DESPUÉS del item N (índice = posición del item que la precede), en
+   * vez de la rotación/azar automática — viene de una instrucción "item N->M transicion=..."
+   * (ver instructionsParser.ts).
+   */
+  transitionOverrides?: Record<number, TransitionType>;
+  /**
    * Retomar un trabajo interrumpido (el servidor murió a mitad de proceso): reutiliza
    * el tempDir y los lotes que ya quedaron renderizados en disco, en vez de volver a
    * procesar todo desde cero. Los lotes en `resumeCompletedBatches` se saltan.
@@ -1339,8 +1552,8 @@ export interface ImageSequenceConfig {
   audioPath?: string;
 }
 
-const DEFAULT_TRANSITION_CYCLE: TransitionType[] = ['fade', 'dissolve', 'wipeleft', 'wiperight', 'slideup', 'slidedown'];
-const DEFAULT_ANIMATION_CYCLE: AnimationType[] = ['zoomin', 'zoomout', 'pan'];
+export const DEFAULT_TRANSITION_CYCLE: TransitionType[] = ['fade', 'dissolve', 'wipeleft', 'wiperight', 'slideup', 'slidedown'];
+export const DEFAULT_ANIMATION_CYCLE: AnimationType[] = ['zoomin', 'zoomout', 'pan'];
 export const IMAGE_BATCH_SIZE = 15;
 
 function pickRandom<T>(arr: T[]): T {
@@ -1351,9 +1564,10 @@ function pickRandom<T>(arr: T[]): T {
  * Reparte totalDuration entre `count` imágenes. En modo aleatorio, cada imagen recibe
  * un peso al azar entre el 40% y el 180% de la duración media, y luego se reescala todo
  * para que la suma coincida exactamente con totalDuration. En modo uniforme, reparte
- * el mismo valor a todas.
+ * el mismo valor a todas. Exportada para que otros motores de renderizado (ej. Remotion)
+ * repartan la duración de forma consistente con Secuencia de Imágenes.
  */
-function generateImageDurations(count: number, totalDuration: number, random: boolean): number[] {
+export function generateImageDurations(count: number, totalDuration: number, random: boolean): number[] {
   const avg = totalDuration / count;
   if (!random) return Array.from({ length: count }, () => avg);
 
@@ -1474,12 +1688,71 @@ function buildImageSegmentFilter(
   return `${base}crop=${width}:${height}:x='${maxDx}*t/${duration.toFixed(3)}':y='${maxDy}*t/${duration.toFixed(3)}',setsar=1,fps=${fps}[${label}]`;
 }
 
+/**
+ * Encaja un video (sin animación propia, ya tiene su propio movimiento) en el lienzo
+ * final con barras negras si no calza el aspect ratio — mismo criterio que el resto del
+ * ensamblaje de video en la app (a diferencia de las imágenes, que usan relleno con blur).
+ */
+function buildVideoSegmentFilter(inputIndex: number, label: string, width: number, height: number, fps: number): string {
+  return `[${inputIndex}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}[${label}]`;
+}
+
+/** "arriba"/"centro"/"abajo" a una expresión Y de ffmpeg — heightExpr es la altura del
+ * elemento (ej. "text_h" para drawtext, o un número fijo para drawbox). `frameH` es la
+ * variable que representa la altura del FRAME en cada filtro — en drawtext "h" ya es la
+ * altura del frame, pero en drawbox "h" es la altura de la propia caja (su parámetro h,
+ * autorreferenciado) y la altura del frame es "ih" — usar "h" ahí deja y en negativo
+ * (se recorta a 0) y la caja termina siempre arriba en vez de abajo/centrada. */
+function overlayYExpr(position: 'centro' | 'arriba' | 'abajo', heightExpr: string, frameH: string = 'h'): string {
+  if (position === 'arriba') return '40';
+  if (position === 'abajo') return `${frameH}-${heightExpr}-40`;
+  return `(${frameH}-${heightExpr})/2`;
+}
+
+/**
+ * Overlays de texto/forma de un item (instrucciones "item N texto=.../forma=...", ver
+ * instructionsParser.ts) — mismo patrón drawtext que ya usa assembleVideo para el
+ * timeline global (`enable='between(t,start,end)'`), pero encadenados DENTRO del
+ * segmento del item: como el trim previo ya resetea "t" a 0 (setpts=PTS-STARTPTS),
+ * start/end aquí son relativos al inicio de ESTE item, tal cual pide el formato.
+ */
+function buildOverlayFilterLines(item: SequenceItem, inputLabel: string, finalLabel: string): string[] {
+  type Overlay = { kind: 'text' | 'shape'; startSec: number; endSec: number; position: 'centro' | 'arriba' | 'abajo'; text?: string; fontSize?: number; color?: string };
+  const overlays: Overlay[] = [
+    ...(item.textOverlays ?? []).map(o => ({ kind: 'text' as const, ...o })),
+    ...(item.shapeOverlays ?? []).map(o => ({ kind: 'shape' as const, ...o })),
+  ];
+  if (overlays.length === 0) return [];
+
+  const lines: string[] = [];
+  let currentLabel = inputLabel;
+  overlays.forEach((ov, idx) => {
+    const nextLabel = idx === overlays.length - 1 ? finalLabel : `${inputLabel}_ov${idx}`;
+    const enable = `enable='between(t\\,${ov.startSec.toFixed(3)}\\,${ov.endSec.toFixed(3)})'`;
+    if (ov.kind === 'text') {
+      const y = overlayYExpr(ov.position, 'text_h');
+      lines.push(
+        `[${currentLabel}]drawtext=text='${escapeForDrawtext(ov.text!)}':fontcolor=white:fontsize=${ov.fontSize || 48}:borderw=3:bordercolor=black:x=(w-text_w)/2:y=${y}:${enable}[${nextLabel}]`
+      );
+    } else {
+      const boxHeight = 80;
+      const y = overlayYExpr(ov.position, String(boxHeight), 'ih');
+      const color = (ov.color || '#E63946').replace('#', '0x');
+      lines.push(`[${currentLabel}]drawbox=x=0:y=${y}:w=iw:h=${boxHeight}:color=${color}@0.6:t=fill:${enable}[${nextLabel}]`);
+    }
+    currentLabel = nextLabel;
+  });
+  return lines;
+}
+
 function buildBatchXfadeFilter(
   labels: string[],
   durations: number[],
   transitionTypes: TransitionType[],
   transitionDuration: number,
-  randomMode: boolean = false
+  randomMode: boolean = false,
+  transitionOverrides?: Record<number, TransitionType>,
+  globalStartIndex: number = 0
 ): { filterLines: string[]; outputLabel: string; totalDuration: number } {
   const n = labels.length;
   if (n === 1) return { filterLines: [], outputLabel: labels[0], totalDuration: durations[0] };
@@ -1489,7 +1762,10 @@ function buildBatchXfadeFilter(
   let prevLabel = labels[0];
 
   for (let i = 1; i < n; i++) {
-    const type = randomMode ? pickRandom(transitionTypes) : transitionTypes[(i - 1) % transitionTypes.length];
+    const globalFromIndex = globalStartIndex + i - 1;
+    const type =
+      transitionOverrides?.[globalFromIndex] ??
+      (randomMode ? pickRandom(transitionTypes) : transitionTypes[(i - 1) % transitionTypes.length]);
     const td = Math.min(transitionDuration, Math.min(durations[i - 1], durations[i]) / 2);
     const outLabel = i === n - 1 ? 'batchout' : `bx${i}`;
     const offset = Math.max(0, mergedDuration - td);
@@ -1504,7 +1780,7 @@ function buildBatchXfadeFilter(
 }
 
 async function renderImageBatch(
-  images: string[],
+  items: SequenceItem[],
   durations: number[],
   batchIndex: number,
   globalImageIndex: number,
@@ -1517,6 +1793,7 @@ async function renderImageBatch(
     transitionDuration: number;
     qsvAvailable: boolean;
     randomMode: boolean;
+    transitionOverrides?: Record<number, TransitionType>;
   },
   progressCtx?: {
     onEvent?: EventCallback;
@@ -1529,27 +1806,53 @@ async function renderImageBatch(
 
   // La animación de cada imagen se decide ANTES de preprocesar, porque el tamaño de
   // lienzo del relleno con blur depende de ella (zoomin/zoomout necesita el doble,
-  // pan un poco más grande, "none" el tamaño final) — ver preprocessBlurFillImage.
-  const animTypes = images.map((_, i) =>
-    opts.randomMode
-      ? pickRandom(opts.animationTypes)
-      : opts.animationTypes[(globalImageIndex + i) % opts.animationTypes.length]
+  // pan un poco más grande, "none" el tamaño final) — ver preprocessBlurFillImage. Los
+  // videos no llevan animación propia (ya tienen su propio movimiento), así que no
+  // necesitan lienzo de relleno con blur ni entran en este cálculo. animationOverride
+  // (instrucción "item N zoom=...") gana siempre sobre la rotación/azar automática.
+  const animTypes = items.map((item, i) =>
+    item.type === 'video'
+      ? 'none'
+      : item.animationOverride
+        ? item.animationOverride
+        : opts.randomMode
+          ? pickRandom(opts.animationTypes)
+          : opts.animationTypes[(globalImageIndex + i) % opts.animationTypes.length]
   );
 
-  const preprocessedPaths = await Promise.all(
-    images.map(async (img, i) => {
-      const { w, h } = blurFillCanvasSize(width, height, animTypes[i]);
+  // Un lote usa PNG temporales con el fondo difuminado. En algunos equipos Windows
+  // uno puede no estar disponible justo al iniciar FFmpeg; lo regeneramos desde la
+  // imagen original sin alterar la secuencia ni sus ajustes visuales.
+  const createBlurFill = async (item: SequenceItem, index: number, outputPath: string) => {
+    const { w, h } = blurFillCanvasSize(width, height, animTypes[index] as AnimationType);
+    await preprocessBlurFillImage(item.path, w, h, outputPath);
+  };
+
+  // Para imágenes: precalcula el lienzo con blur (archivo temporal a limpiar después).
+  // Para videos: se usa el archivo original tal cual, sin preprocesar ni tocar.
+  const preprocessedItems = await Promise.all(
+    items.map(async (item, i) => {
+      if (item.type === 'video') return { path: item.path, temp: false };
       const outPath = join(outputDir, `blurfill_${batchIndex}_${i}.png`);
-      await preprocessBlurFillImage(img, w, h, outPath);
-      return outPath;
+      await createBlurFill(item, i, outPath);
+      return { path: outPath, temp: true };
     })
   );
 
   const filterParts: string[] = [];
   const labels: string[] = [];
-  images.forEach((_, i) => {
+  items.forEach((item, i) => {
+    const hasOverlays = !!(item.textOverlays?.length || item.shapeOverlays?.length);
     const label = `img${i}`;
-    filterParts.push(buildImageSegmentFilter(i, label, width, height, opts.fps, durations[i], animTypes[i]));
+    const baseLabel = hasOverlays ? `imgbase${i}` : label;
+    filterParts.push(
+      item.type === 'video'
+        ? buildVideoSegmentFilter(i, baseLabel, width, height, opts.fps)
+        : buildImageSegmentFilter(i, baseLabel, width, height, opts.fps, durations[i], animTypes[i] as AnimationType)
+    );
+    if (hasOverlays) {
+      filterParts.push(...buildOverlayFilterLines(item, baseLabel, label));
+    }
     labels.push(label);
   });
 
@@ -1558,7 +1861,9 @@ async function renderImageBatch(
     durations,
     opts.transitionTypes,
     opts.transitionDuration,
-    opts.randomMode
+    opts.randomMode,
+    opts.transitionOverrides,
+    globalImageIndex
   );
   filterParts.push(...filterLines);
 
@@ -1572,16 +1877,30 @@ async function renderImageBatch(
   // propio comando de FFmpeg desde cero (un comando de fluent-ffmpeg solo se puede
   // ejecutar una vez) para poder reintentar limpio si falla.
   const runEncodeAttempt = async (useQsv: boolean): Promise<string> => {
+    // Evita el fallo "No such file or directory" si un temporal fue eliminado o
+    // bloqueado entre el preprocesado y el inicio del encoder.
+    for (let i = 0; i < preprocessedItems.length; i++) {
+      const prepared = preprocessedItems[i];
+      if (prepared.temp && !existsSync(prepared.path)) {
+        await createBlurFill(items[i], i, prepared.path);
+      }
+    }
     const filterScriptPath = await writeFilterScript(filterParts.join(';'));
     const videoCodecArgs = useQsv
       ? [`-c:v h264_qsv`, `-preset veryfast`, `-profile:v high`]
       : [`-c:v libx264`, `-preset veryfast`, `-profile:v high`];
 
     const command = ffmpeg();
-    preprocessedPaths.forEach((img, i) => {
-      // -framerate explícito (ver comentario en renderImageClip): evita el temblor de
-      // zoompan al mantener el ritmo de entrada sincronizado con el fps del proyecto.
-      command.input(img).inputOptions(['-loop', '1', '-framerate', String(opts.fps), '-t', durations[i].toFixed(3)]);
+    preprocessedItems.forEach((preprocessed, i) => {
+      if (items[i].type === 'video') {
+        // Sin audio (video mudo por diseño) y en bucle si es más corto que la
+        // duración asignada — si es más largo, "-t" simplemente lo recorta.
+        command.input(preprocessed.path).inputOptions(['-stream_loop', '-1', '-t', durations[i].toFixed(3), '-an']);
+      } else {
+        // -framerate explícito (ver comentario en renderImageClip): evita el temblor de
+        // zoompan al mantener el ritmo de entrada sincronizado con el fps del proyecto.
+        command.input(preprocessed.path).inputOptions(['-loop', '1', '-framerate', String(opts.fps), '-t', durations[i].toFixed(3)]);
+      }
     });
 
     return new Promise((resolve, reject) => {
@@ -1653,7 +1972,7 @@ async function renderImageBatch(
   for (let i = 0; i < attempts.length; i++) {
     try {
       const result = await runEncodeAttempt(attempts[i].useQsv);
-      for (const p of preprocessedPaths) fs.unlink(p).catch(() => {});
+      for (const p of preprocessedItems) if (p.temp) fs.unlink(p.path).catch(() => {});
       return result;
     } catch (err) {
       lastError = err instanceof Error ? err : new Error('Error desconocido');
@@ -1665,7 +1984,7 @@ async function renderImageBatch(
       }
     }
   }
-  for (const p of preprocessedPaths) fs.unlink(p).catch(() => {});
+  for (const p of preprocessedItems) if (p.temp) fs.unlink(p.path).catch(() => {});
   throw lastError;
 }
 
@@ -1703,7 +2022,7 @@ async function concatBatches(batchPaths: string[], outputPath: string): Promise<
  * audio ya tengan duraciones compatibles (usar syncTimelineToAudio antes de armar
  * el video para que coincidan) — aquí solo se usa "-shortest" como salvaguarda.
  */
-async function muxReplaceAudio(videoPath: string, audioPath: string, outputPath: string): Promise<void> {
+async function muxReplaceAudio(videoPath: string, audioPath: string, outputPath: string, cutToShortest: boolean = true): Promise<void> {
   return new Promise((resolvePromise, reject) => {
     ffmpeg()
       .input(videoPath)
@@ -1714,7 +2033,7 @@ async function muxReplaceAudio(videoPath: string, audioPath: string, outputPath:
         '-c:v copy',
         '-c:a aac',
         '-b:a 192k',
-        '-shortest',
+        ...(cutToShortest ? ['-shortest'] : []),
         '-movflags +faststart',
         '-y',
       ])
@@ -1723,6 +2042,441 @@ async function muxReplaceAudio(videoPath: string, audioPath: string, outputPath:
       .on('error', (err: Error) => reject(err))
       .run();
   });
+}
+
+function getInsertImageSlots(count: number, videoDuration: number): Array<{ start: number; end: number }> {
+  if (count <= 0 || videoDuration < 1) return [];
+
+  const displayDuration = Math.min(4, Math.max(1, videoDuration / Math.max(count * 3, 1)));
+  return Array.from({ length: count }, (_, i) => {
+    const center = ((i + 1) * videoDuration) / (count + 1);
+    const start = Math.max(0, Math.min(videoDuration - displayDuration, center - displayDuration / 2));
+    return { start, end: Math.min(videoDuration, start + displayDuration) };
+  }).filter(slot => slot.end - slot.start >= 0.5);
+}
+
+async function overlayInsertImages(
+  videoPath: string,
+  imagePaths: string[],
+  outputPath: string,
+  width: number,
+  height: number,
+  fps: number,
+  onEvent?: EventCallback,
+  animateImages: boolean = false
+): Promise<void> {
+  const validImages = imagePaths.filter(p => existsSync(p));
+  if (validImages.length === 0) {
+    await fs.copyFile(videoPath, outputPath);
+    return;
+  }
+
+  const videoDuration = await getDuration(videoPath);
+  const slots = getInsertImageSlots(validImages.length, videoDuration);
+  if (slots.length === 0) {
+    onEvent?.('warning', '⚠️ El video es demasiado corto para insertar imágenes sin amontonarlas; se omite la inserción.');
+    await fs.copyFile(videoPath, outputPath);
+    return;
+  }
+
+  const hasAudio = await hasAudioStream(videoPath);
+  const command = ffmpeg();
+  command.input(videoPath);
+  validImages.slice(0, slots.length).forEach(imagePath => {
+    command.input(imagePath).inputOptions(['-loop 1']);
+  });
+
+  const filterParts: string[] = [];
+  let currentLabel = '0:v';
+  const fgMaxW = Math.round(width * 0.86);
+  const fgMaxH = Math.round(height * 0.86);
+
+  slots.forEach((slot, i) => {
+    const inputIndex = i + 1;
+    const splitA = `insert${i}a`;
+    const splitB = `insert${i}b`;
+    const bg = `insert${i}bg`;
+    const fg = `insert${i}fg`;
+    const frame = `insert${i}frame`;
+    const nextLabel = `vinsert${i}`;
+    const duration = slot.end - slot.start;
+    // Los cuatro movimientos se alternan para que la galería no parezca una sucesión
+    // de diapositivas estáticas. Se calculan con el tiempo local de cada imagen.
+    const motion = i % 4;
+    const foregroundPosition = !animateImages ? `x=(W-w)/2:y=(H-h)/2` : motion === 0
+      ? `x=(W-w)/2+14*t/${duration.toFixed(3)}:y=(H-h)/2`
+      : motion === 1
+        ? `x=(W-w)/2-14*t/${duration.toFixed(3)}:y=(H-h)/2`
+        : motion === 2
+          ? `x=(W-w)/2:y=(H-h)/2+10*t/${duration.toFixed(3)}`
+          : `x=(W-w)/2:y=(H-h)/2-10*t/${duration.toFixed(3)}`;
+    const fadeFilters = animateImages
+      ? `,format=rgba,fade=t=in:st=0:d=0.35:alpha=1,fade=t=out:st=${Math.max(0, duration - 0.35).toFixed(3)}:d=0.35:alpha=1`
+      : ',format=yuv420p';
+
+    filterParts.push(`[${inputIndex}:v]trim=duration=${duration.toFixed(3)},setpts=PTS-STARTPTS,split=2[${splitA}][${splitB}]`);
+    filterParts.push(`[${splitA}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=30[${bg}]`);
+    filterParts.push(`[${splitB}]scale=${fgMaxW}:${fgMaxH}:force_original_aspect_ratio=decrease,gblur=sigma=1[${fg}]`);
+    filterParts.push(`[${bg}][${fg}]overlay=${foregroundPosition}${fadeFilters},setpts=PTS+${slot.start.toFixed(3)}/TB[${frame}]`);
+    filterParts.push(`[${currentLabel}][${frame}]overlay=0:0:enable='between(t\\,${slot.start.toFixed(3)}\\,${slot.end.toFixed(3)})'[${nextLabel}]`);
+    currentLabel = nextLabel;
+  });
+
+  const filterScriptPath = await writeFilterScript(filterParts.join(';'));
+  const audioArgs = hasAudio ? ['-map 0:a:0?', '-c:a copy'] : ['-an'];
+
+  return new Promise((resolvePromise, reject) => {
+    command
+      .outputOptions([
+        '-filter_complex_script', filterScriptPath,
+        `-map [${currentLabel}]`,
+        ...audioArgs,
+        '-c:v libx264',
+        '-preset veryfast',
+        '-profile:v high',
+        '-pix_fmt yuv420p',
+        `-r ${fps}`,
+        '-movflags +faststart',
+        '-max_muxing_queue_size 9999',
+        '-y',
+      ])
+      .output(outputPath)
+      .on('start', () => {
+        onEvent?.('info', `🖼️ Insertando ${slots.length} imagen(es) con blur repartidas por el video...`);
+      })
+      .on('end', () => {
+        fs.unlink(filterScriptPath).catch(() => {});
+        resolvePromise();
+      })
+      .on('error', (err: Error) => {
+        fs.unlink(filterScriptPath).catch(() => {});
+        reject(err);
+      })
+      .run();
+  });
+}
+
+export interface ProductSegmentInput {
+  name: string;
+  /** Tramo dentro del único video de referencia — se usa tal cual, sin detectar/reordenar escenas. */
+  videoStart: number;
+  videoEnd: number;
+  /** Duración objetivo de este producto en el video final (según cuánto dura su narración). */
+  assignedDurationSeconds: number;
+  /** Imágenes de relleno para este producto, usadas en orden si el tramo de video queda corto. */
+  imagePaths?: string[];
+}
+
+export interface ProductSegmentsConfig {
+  videoPath: string;
+  audioPath: string;
+  segments: ProductSegmentInput[];
+  outputFilename?: string;
+  resolution?: '720p' | '1080p' | '2k' | '4k';
+  fps?: number;
+  animations?: AnimationConfig;
+  /**
+   * Igual que en Cola de Edición: dentro del tramo de cada producto (sin tocar el orden
+   * de los productos entre sí), detecta escenas y las reordena por pares (1↔2, 3↔4...).
+   */
+  splitScenes?: boolean;
+}
+
+/**
+ * Recorta con precisión de fotograma un tramo del video (sin audio, sin reescalar) a un
+ * archivo temporal — se usa solo para poder pasarle ese tramo aislado a detectScenes() y
+ * así detectar escenas DENTRO de ese tramo exacto. Antes se escaneaba el video de
+ * referencia completo UNA sola vez y esos cortes globales se recortaban por rango con
+ * clipBoundariesToRange(): si un corte real no caía justo en el límite entre dos
+ * productos, el mismo plano quedaba partido en dos — la mitad como último clip de un
+ * producto y la otra mitad como primer clip del siguiente — y al reproducirse seguidos
+ * se ve como si el clip "se repitiera". Escaneando cada tramo por separado, cada producto
+ * solo puede reordenar planos que están enteros dentro de su propio tramo.
+ */
+async function extractRangeForSceneAnalysis(videoPath: string, start: number, end: number, outputPath: string): Promise<void> {
+  const duration = Math.max(0.1, end - start);
+  return new Promise((resolvePromise, reject) => {
+    ffmpeg(videoPath)
+      .inputOptions([`-ss ${start.toFixed(3)}`])
+      .outputOptions([`-t ${duration.toFixed(3)}`, '-c:v libx264', '-preset ultrafast', '-an', '-y'])
+      .output(outputPath)
+      .on('end', () => resolvePromise())
+      .on('error', (err: Error) => reject(err))
+      .run();
+  });
+}
+
+/**
+ * Arma un video de "recopilación por producto": un único video de referencia se recorta
+ * en tramos por producto, en su orden original (el orden de los productos nunca cambia)
+ * y, si un tramo queda más corto que la duración asignada a ese producto, se completa con
+ * las imágenes de relleno de ese mismo producto — en vez de repetir/reordenar clips
+ * globalmente como hace assembleVideo. El audio de narración se usa completo, sin tocar.
+ * Con splitScenes activo, dentro de cada tramo (no entre productos) se detectan escenas
+ * y se reordenan por pares, igual que en Cola de Edición.
+ */
+export async function assembleProductSegments(config: ProductSegmentsConfig, onEvent?: EventCallback): Promise<string> {
+  const { videoPath, audioPath, segments, outputFilename, resolution = '1080p', fps = 30, animations, splitScenes = false } = config;
+
+  if (segments.length === 0) {
+    throw new Error('Se necesita al menos un segmento de producto');
+  }
+
+  const { width, height } = RESOLUTION_MAP[resolution];
+  const qsvAvailable = await isQsvAvailable();
+
+  const assignedTotal = segments.reduce((s, seg) => s + seg.assignedDurationSeconds, 0);
+  const audioDuration = await getDuration(audioPath);
+  if (Math.abs(assignedTotal - audioDuration) > 2) {
+    onEvent?.(
+      'warning',
+      `⚠️ La suma de duraciones asignadas (${assignedTotal.toFixed(1)}s) no coincide con la duración del audio (${audioDuration.toFixed(1)}s) — el resultado se recortará al más corto de los dos.`
+    );
+  }
+
+  const tempDir = join(tmpdir(), `._tmp_product_segments_${uuidv4().slice(0, 8)}`);
+  await fs.mkdir(tempDir, { recursive: true });
+  const piecePaths: string[] = [];
+
+  try {
+    for (let i = 0; i < segments.length; i++) {
+      const seg = segments[i];
+      onEvent?.(
+        'progress',
+        `🎬 Procesando "${seg.name}" (${i + 1}/${segments.length})...`,
+        (i / segments.length) * 100
+      );
+
+      const videoSegDuration = Math.max(0, seg.videoEnd - seg.videoStart);
+      const targetDuration = Math.max(0.1, seg.assignedDurationSeconds);
+      const usedVideoDuration = Math.min(videoSegDuration, targetDuration);
+
+      if (usedVideoDuration > 0.05) {
+        const rangeEnd = seg.videoStart + usedVideoDuration;
+        let videoPieces: TimelineSegment[];
+        if (splitScenes) {
+          onEvent?.('info', `🔍 Detectando escenas en "${seg.name}"...`);
+          const analysisPath = join(tempDir, `analysis-${i}-${uuidv4().slice(0, 8)}.mp4`);
+          await extractRangeForSceneAnalysis(videoPath, seg.videoStart, rangeEnd, analysisPath);
+          let localBoundaries: SceneBoundary[];
+          try {
+            localBoundaries = await detectScenes(analysisPath, onEvent);
+          } finally {
+            await fs.unlink(analysisPath).catch(() => {});
+          }
+          videoPieces = reorderClips(localBoundaries).map(b => ({
+            inputIndex: 0,
+            start: seg.videoStart + b.start,
+            end: Math.min(rangeEnd, seg.videoStart + b.end),
+          }));
+        } else {
+          videoPieces = [{ inputIndex: 0, start: seg.videoStart, end: rangeEnd }];
+        }
+
+        if (videoPieces.length > 0) {
+          const piecePath = await renderAssembleBatch([videoPath], videoPieces, piecePaths.length, tempDir, {
+            width,
+            height,
+            fps,
+            qsvAvailable,
+          });
+          piecePaths.push(piecePath);
+        }
+      }
+
+      const gap = targetDuration - usedVideoDuration;
+      if (gap > 0.5 && seg.imagePaths && seg.imagePaths.length > 0) {
+        onEvent?.('info', `🖼️ "${seg.name}": completando ${gap.toFixed(1)}s con ${seg.imagePaths.length} imagen(es) de relleno...`);
+        // Reparte el hueco entre las imágenes provistas; syncTimelineToAudio se encarga de
+        // estirar el ciclo (más tiempo por imagen, sin repetir ninguna) si no alcanzan, o
+        // recortar la última si sobran.
+        const perImage = Math.max(1, gap / seg.imagePaths.length);
+        const imageSlots: { start: number; end: number; speedFactor?: number }[] = seg.imagePaths.map(() => ({ start: 0, end: perImage }));
+        const { segments: fittedSlots } = syncTimelineToAudio(imageSlots, gap, true);
+
+        for (let j = 0; j < fittedSlots.length; j++) {
+          const dur = (fittedSlots[j].end - fittedSlots[j].start) * (fittedSlots[j].speedFactor ?? 1);
+          if (dur < 0.2) continue;
+          const imgPath = seg.imagePaths[j % seg.imagePaths.length];
+          const animType: AnimationType =
+            animations?.enabled && animations.type !== 'none'
+              ? animations.type
+              : DEFAULT_ANIMATION_CYCLE[j % DEFAULT_ANIMATION_CYCLE.length];
+          const imgPiecePath = join(tempDir, `piece-${piecePaths.length}-${uuidv4().slice(0, 8)}.mp4`);
+          await renderImageClip(imgPath, dur, imgPiecePath, width, height, fps, animType, qsvAvailable);
+          piecePaths.push(imgPiecePath);
+        }
+      } else if (gap > 0.5) {
+        onEvent?.(
+          'warning',
+          `⚠️ "${seg.name}" queda ${gap.toFixed(1)}s corto y no tiene imágenes de relleno asignadas`
+        );
+      }
+    }
+
+    if (piecePaths.length === 0) {
+      throw new Error('No se generó ningún contenido de video a partir de los segmentos');
+    }
+
+    onEvent?.('info', '🔗 Uniendo todos los segmentos...', 95);
+    const concatenatedPath = join(tempDir, 'concatenated.mp4');
+    await concatBatches(piecePaths, concatenatedPath);
+
+    const outputId = outputFilename || `product-segments-${uuidv4()}`;
+    const outputPath = join(OUTPUT_DIR, `${outputId}.mp4`);
+    onEvent?.('info', '🎧 Añadiendo el audio de narración...');
+    await muxReplaceAudio(concatenatedPath, audioPath, outputPath);
+
+    onEvent?.('success', '✅ Video por producto completado');
+    return outputPath;
+  } finally {
+    for (const p of piecePaths) await fs.unlink(p).catch(() => {});
+    await fs.unlink(join(tempDir, 'concatenated.mp4')).catch(() => {});
+    await fs.rmdir(tempDir).catch(() => {});
+  }
+}
+
+export interface TimelineClipInput {
+  path: string;
+  start: number;
+  end: number;
+}
+
+export interface TimelineJoinConfig {
+  clips: TimelineClipInput[];
+  outputFilename?: string;
+  resolution?: '720p' | '1080p' | '2k' | '4k';
+  fps?: number;
+}
+
+/**
+ * Recorta un tramo exacto de un clip (conservando su audio original) y lo re-escala al
+ * tamaño del proyecto. El seek de entrada (-ss antes de -i) + recodificación da un corte
+ * preciso al frame sin tener que decodificar el archivo completo desde el principio.
+ */
+async function trimClipWithAudio(
+  inputPath: string,
+  start: number,
+  end: number,
+  outputPath: string,
+  width: number,
+  height: number,
+  fps: number,
+  qsvAvailable: boolean
+): Promise<void> {
+  const duration = Math.max(0.1, end - start);
+  const videoCodecArgs = qsvAvailable
+    ? [`-c:v h264_qsv`, `-preset veryfast`, `-profile:v high`]
+    : [`-c:v libx264`, `-preset veryfast`, `-profile:v high`];
+
+  return new Promise((resolvePromise, reject) => {
+    ffmpeg(inputPath)
+      .inputOptions([`-ss ${start.toFixed(3)}`])
+      .outputOptions([
+        `-t ${duration.toFixed(3)}`,
+        `-vf scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:black,setsar=1`,
+        ...videoCodecArgs,
+        '-pix_fmt yuv420p',
+        `-r ${fps}`,
+        '-c:a aac',
+        '-b:a 192k',
+        '-ar 48000',
+        '-g 30',
+        '-keyint_min 30',
+        '-y',
+      ])
+      .output(outputPath)
+      .on('end', () => resolvePromise())
+      .on('error', (err: Error) => reject(err))
+      .run();
+  });
+}
+
+/**
+ * Editor de línea de tiempo simple: recorta cada clip a su tramo exacto (con audio
+ * original) y los une en el orden dado, para armar un "rough cut" que luego se pueda
+ * seguir editando en Editor de Clips o Cola de Edición.
+ */
+export async function assembleTimelineJoin(config: TimelineJoinConfig, onEvent?: EventCallback): Promise<string> {
+  const { clips, outputFilename, resolution = '1080p', fps = 30 } = config;
+
+  if (clips.length === 0) {
+    throw new Error('Se necesita al menos un clip');
+  }
+
+  const { width, height } = RESOLUTION_MAP[resolution];
+  const qsvAvailable = await isQsvAvailable();
+
+  const tempDir = join(tmpdir(), `._tmp_timeline_join_${uuidv4().slice(0, 8)}`);
+  await fs.mkdir(tempDir, { recursive: true });
+  const piecePaths: string[] = [];
+
+  try {
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i];
+      onEvent?.('progress', `✂️ Recortando clip ${i + 1}/${clips.length}...`, (i / clips.length) * 100);
+      const piecePath = join(tempDir, `piece-${i}-${uuidv4().slice(0, 8)}.mp4`);
+      await trimClipWithAudio(clip.path, clip.start, clip.end, piecePath, width, height, fps, qsvAvailable);
+      piecePaths.push(piecePath);
+    }
+
+    const outputId = outputFilename || `timeline-join-${uuidv4()}`;
+    const outputPath = join(OUTPUT_DIR, `${outputId}.mp4`);
+
+    if (piecePaths.length === 1) {
+      await fs.copyFile(piecePaths[0], outputPath);
+    } else {
+      onEvent?.('info', '🔗 Uniendo clips...', 95);
+      await concatBatches(piecePaths, outputPath);
+    }
+
+    onEvent?.('success', '✅ Clips unidos y recortados');
+    return outputPath;
+  } finally {
+    for (const p of piecePaths) await fs.unlink(p).catch(() => {});
+    await fs.rmdir(tempDir).catch(() => {});
+  }
+}
+
+/**
+ * "Desagrupa" un video por escenas — igual que hace Cola de Edición con un video
+ * completo (detectScenes + reorderClips/shuffleClips), pero aquí el resultado se ajusta a
+ * una duración objetivo (sin repetir, ver syncTimelineToAudio) y se renderiza a UN SOLO
+ * archivo de video (sin audio) en OUTPUT_DIR. Ese archivo se trata después como un item
+ * de video normal por cualquiera de los dos motores de Composición con Remotion — así
+ * "desagrupar" funciona igual en FFmpeg y en Remotion sin tocar ninguno de los dos
+ * pipelines de ensamblaje.
+ */
+export async function prepareDesagrupadoVideoItem(
+  videoPath: string,
+  targetDurationSeconds: number,
+  fullShuffle: boolean,
+  onEvent?: EventCallback
+): Promise<string> {
+  onEvent?.('info', `🔍 Desagrupando "${basename(videoPath)}"...`);
+  let boundaries = await detectScenes(videoPath, onEvent);
+  boundaries = fullShuffle ? shuffleClips(boundaries) : reorderClips(boundaries);
+
+  const { segments: fitted } = syncTimelineToAudio(boundaries, Math.max(0.1, targetDurationSeconds), false);
+  const segments: TimelineSegment[] = fitted.map(b => ({ inputIndex: 0, start: b.start, end: b.end, speedFactor: b.speedFactor }));
+
+  const qsvAvailable = await isQsvAvailable();
+  const tempDir = join(tmpdir(), `._tmp_desagrupar_${uuidv4().slice(0, 8)}`);
+  await fs.mkdir(tempDir, { recursive: true });
+  try {
+    const rendered = await renderAssembleBatch([videoPath], segments, 0, tempDir, {
+      width: 1920,
+      height: 1080,
+      fps: 30,
+      qsvAvailable,
+    });
+    const outputPath = join(OUTPUT_DIR, `desagrupado-${uuidv4()}.mp4`);
+    await fs.copyFile(rendered, outputPath);
+    onEvent?.('info', `✅ "${basename(videoPath)}" desagrupado (${fitted.length} fragmentos)`);
+    return outputPath;
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /**
@@ -1739,7 +2493,7 @@ export async function assembleImageSequence(
   onBatchComplete?: (batchIndex: number, outputPath: string, tempDir: string) => void
 ): Promise<string> {
   const {
-    imagePaths,
+    items,
     outputFilename,
     totalDurationSeconds,
     perImageDuration: fixedPerImageDuration,
@@ -1753,35 +2507,41 @@ export async function assembleImageSequence(
     resumeTempDir,
     resumeCompletedBatches,
     audioPath,
+    explicitDurationsSeconds,
+    transitionOverrides,
   } = config;
 
-  if (imagePaths.length === 0) throw new Error('No hay imágenes para procesar');
+  if (items.length === 0) throw new Error('No hay imágenes ni videos para procesar');
 
-  const batches: string[][] = [];
-  for (let i = 0; i < imagePaths.length; i += batchSize) {
-    batches.push(imagePaths.slice(i, i + batchSize));
+  // El orden de "items" (tal cual llega, mezclando imágenes y videos) se respeta tal
+  // cual a lo largo de todo el ensamblaje — batching, duraciones y transiciones solo
+  // dividen/agrupan esa secuencia, nunca la reordenan.
+  const batches: SequenceItem[][] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    batches.push(items.slice(i, i + batchSize));
   }
 
   // Cada transición xfade DENTRO de un lote solapa (y por tanto acorta) la duración
   // final; los cortes ENTRE lotes son directos, sin solape. Se compensa la duración
-  // pedida por imagen para que el video final, ya con las transiciones aplicadas,
+  // pedida por elemento para que el video final, ya con las transiciones aplicadas,
   // termine coincidiendo con el objetivo en vez de quedar corto.
-  const numIntraBatchTransitions = imagePaths.length - batches.length;
+  const numIntraBatchTransitions = items.length - batches.length;
   const estimatedShrinkage = Math.max(0, numIntraBatchTransitions) * transitionDuration;
 
   const rawTargetTotal =
     fixedPerImageDuration !== undefined
-      ? fixedPerImageDuration * imagePaths.length
-      : totalDurationSeconds ?? imagePaths.length * 5;
+      ? fixedPerImageDuration * items.length
+      : totalDurationSeconds ?? items.length * 5;
 
-  const imageDurations = generateImageDurations(imagePaths.length, rawTargetTotal + estimatedShrinkage, randomMode);
+  const imageDurations =
+    explicitDurationsSeconds ?? generateImageDurations(items.length, rawTargetTotal + estimatedShrinkage, randomMode);
   const totalDuration = rawTargetTotal;
 
   onEvent?.(
     'info',
     randomMode
-      ? `🖼️ ${imagePaths.length} imágenes, duración variable por imagen (~${formatDuration(totalDuration)} en total)`
-      : `🖼️ ${imagePaths.length} imágenes, ${(rawTargetTotal / imagePaths.length).toFixed(2)}s cada una (~${formatDuration(totalDuration)} en total)`
+      ? `🖼️ ${items.length} elementos, duración variable por elemento (~${formatDuration(totalDuration)} en total)`
+      : `🖼️ ${items.length} elementos, ${(rawTargetTotal / items.length).toFixed(2)}s cada uno (~${formatDuration(totalDuration)} en total)`
   );
 
   const tempDir = resumeTempDir || join(tmpdir(), `._tmp_batches_${uuidv4().slice(0, 8)}`);
@@ -1817,7 +2577,7 @@ export async function assembleImageSequence(
       } else {
         onEvent?.(
           'progress',
-          `🎬 Procesando lote ${b + 1}/${batches.length} (${globalIndex}/${imagePaths.length} imágenes)...`,
+          `🎬 Procesando lote ${b + 1}/${batches.length} (${globalIndex}/${items.length} elementos)...`,
           (b / batches.length) * 100,
           { currentSeconds: elapsedTargetSeconds, totalSeconds: totalDuration }
         );
@@ -1836,6 +2596,7 @@ export async function assembleImageSequence(
             transitionDuration,
             qsvAvailable,
             randomMode,
+            transitionOverrides,
           },
           { onEvent, totalBatches: batches.length, elapsedTargetSeconds, projectTotalSeconds: totalDuration }
         );

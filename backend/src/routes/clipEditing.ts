@@ -3,24 +3,31 @@ import { join, basename } from 'path';
 import { existsSync } from 'fs';
 import {
   assembleVideo,
+  assembleProductSegments,
   detectScenes,
   type ProcessConfig,
   type TextOverlay,
   type BackgroundMusicConfig,
   type TransitionConfig,
   type AnimationConfig,
+  type ProductSegmentInput,
 } from '../services/clipEditingService.js';
 import { parseEditingInstructions } from '../services/editingInstructionsService.js';
 import { recordVideoHistory } from '../services/databaseService.js';
-import { toOutputUrl } from '../services/outputStorage.js';
+import { OUTPUT_DIR, toOutputUrl } from '../services/outputStorage.js';
 
 const router = Router();
 
 const uploadDirRel = process.env.UPLOAD_DIR || './uploads';
 const uploadDirAbs = join(process.cwd(), uploadDirRel);
 
+// Además de rutas subidas por el usuario (/uploads/...), acepta resultados de otras
+// herramientas del sistema (/outputs/...) — ej. el rough cut del Editor de Línea de
+// Tiempo pasado directo a esta herramienta.
 function resolveUploadPath(path: string): string {
-  return path.startsWith('/uploads/') ? join(uploadDirAbs, path.replace('/uploads/', '')) : path;
+  if (path.startsWith('/uploads/')) return join(uploadDirAbs, path.replace('/uploads/', ''));
+  if (path.startsWith('/outputs/')) return join(OUTPUT_DIR, decodeURIComponent(path.replace('/outputs/', '')));
+  return path;
 }
 
 interface JobStatus {
@@ -88,9 +95,13 @@ interface ProcessRequestBody {
   fps?: number;
   splitScenes?: boolean;
   allowClipRepeat?: boolean;
+  fullShuffle?: boolean;
   transitions?: TransitionConfig;
   animations?: AnimationConfig;
   maxClipDuration?: number;
+  complementaryPaths?: string[];
+  complementarySourceTypes?: Array<'video' | 'image'>;
+  complementaryImageDurations?: number[];
 }
 
 router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Response) => {
@@ -115,8 +126,9 @@ router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Re
     const resolvedBackgroundMusic = body.backgroundMusic?.path
       ? { ...body.backgroundMusic, path: resolveUploadPath(body.backgroundMusic.path) }
       : body.backgroundMusic;
+    const resolvedComplementaryPaths = (body.complementaryPaths || []).map(resolveUploadPath);
 
-    const missingFiles = [...resolvedVideoPaths, resolvedAudioPath, resolvedBackgroundMusic?.path]
+    const missingFiles = [...resolvedVideoPaths, resolvedAudioPath, resolvedBackgroundMusic?.path, ...resolvedComplementaryPaths]
       .filter((p): p is string => !!p)
       .filter(p => !existsSync(p));
 
@@ -140,9 +152,13 @@ router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Re
       fps: body.fps,
       splitScenes: body.splitScenes,
       allowClipRepeat: body.allowClipRepeat,
+      fullShuffle: body.fullShuffle,
       transitions: body.transitions,
       animations: body.animations,
       maxClipDuration: body.maxClipDuration,
+      complementaryPaths: resolvedComplementaryPaths,
+      complementarySourceTypes: body.complementarySourceTypes,
+      complementaryImageDurations: body.complementaryImageDurations,
     };
 
     assembleVideo(config, (type, message, percent, extra) => addJobEvent(jobId, type, message, percent, extra))
@@ -179,6 +195,107 @@ router.post('/process', async (req: Request<{}, {}, ProcessRequestBody>, res: Re
       });
   } catch (error) {
     console.error('Error in clip-editing process route:', error);
+    res.status(500).json({
+      error: 'Failed to start processing',
+      details: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+interface ProcessSegmentsRequestBody {
+  jobId: string;
+  videoPath: string;
+  audioPath: string;
+  segments: ProductSegmentInput[];
+  outputFilename?: string;
+  resolution?: '720p' | '1080p' | '2k' | '4k';
+  fps?: number;
+  animations?: AnimationConfig;
+  splitScenes?: boolean;
+}
+
+router.post('/process-segments', async (req: Request<{}, {}, ProcessSegmentsRequestBody>, res: Response) => {
+  try {
+    const body = req.body;
+
+    if (!body.videoPath) {
+      return res.status(400).json({ error: 'videoPath es requerido' });
+    }
+    if (!body.audioPath) {
+      return res.status(400).json({ error: 'audioPath es requerido' });
+    }
+    if (!body.segments || body.segments.length === 0) {
+      return res.status(400).json({ error: 'segments es requerido y no puede estar vacío' });
+    }
+
+    const jobId = body.jobId;
+    const job = getOrCreateJob(jobId);
+    job.isProcessing = true;
+
+    res.json({ message: 'Procesamiento iniciado', jobId });
+
+    const resolvedVideoPath = resolveUploadPath(body.videoPath);
+    const resolvedAudioPath = resolveUploadPath(body.audioPath);
+    const resolvedSegments = body.segments.map(seg => ({
+      ...seg,
+      imagePaths: (seg.imagePaths || []).map(resolveUploadPath),
+    }));
+
+    const missingFiles = [resolvedVideoPath, resolvedAudioPath, ...resolvedSegments.flatMap(s => s.imagePaths || [])]
+      .filter(p => !existsSync(p));
+
+    if (missingFiles.length > 0) {
+      addJobEvent(jobId, 'error', `❌ Archivo(s) no encontrado(s): ${missingFiles.join(', ')}`);
+      job.isProcessing = false;
+      return;
+    }
+
+    assembleProductSegments(
+      {
+        videoPath: resolvedVideoPath,
+        audioPath: resolvedAudioPath,
+        segments: resolvedSegments,
+        outputFilename: body.outputFilename,
+        resolution: body.resolution,
+        fps: body.fps,
+        animations: body.animations,
+        splitScenes: body.splitScenes,
+      },
+      (type, message, percent, extra) => addJobEvent(jobId, type, message, percent, extra)
+    )
+      .then(outputPath => {
+        const j = jobStatus.get(jobId);
+        if (j) {
+          j.isProcessing = false;
+          j.outputUrl = toOutputUrl(outputPath);
+        }
+        broadcast(jobId);
+        recordVideoHistory(
+          'clip-editing',
+          basename(outputPath),
+          `${resolvedSegments.length} productos`,
+          outputPath,
+          'completed',
+          0
+        );
+      })
+      .catch(error => {
+        const errorMsg = error instanceof Error ? error.message : 'Error desconocido';
+        addJobEvent(jobId, 'error', `❌ Procesamiento fallido: ${errorMsg}`);
+        const j = jobStatus.get(jobId);
+        if (j) j.isProcessing = false;
+        recordVideoHistory(
+          'clip-editing',
+          body.outputFilename || 'por-producto.mp4',
+          `${resolvedSegments.length} productos`,
+          '',
+          'failed',
+          0,
+          errorMsg
+        );
+      });
+  } catch (error) {
+    console.error('Error in clip-editing process-segments route:', error);
     res.status(500).json({
       error: 'Failed to start processing',
       details: error instanceof Error ? error.message : 'Unknown error',

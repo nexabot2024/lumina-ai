@@ -3,6 +3,7 @@ import { Sparkles, Loader, Copy, Edit2, AlertCircle } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import { API_URL } from '../services/apiUrl';
+import CustomSelect from './CustomSelect';
 
 interface Prompt {
   id: string;
@@ -239,17 +240,17 @@ export default function PromptGenerator({
       {/* Configuration Section */}
       <div className="card-lg">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 bg-accent-600 rounded-lg">
+          <div className="p-3 card-icon">
             <Sparkles className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Generador de Prompts</h2>
-            <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Crea automáticamente prompts para cada sección del guión</p>
+            <h2 className="card-title">Generador de Prompts</h2>
+            <p className="card-subtitle">Crea automáticamente prompts para cada sección del guión</p>
           </div>
         </div>
 
         {numSections > 0 && (
-          <div className="mb-6 p-4 bg-accent-50 dark:bg-accent-950/50 rounded-lg border border-accent-200 dark:border-accent-800 flex items-start gap-3">
+          <div className="mb-6 p-4 bg-accent-50 dark:bg-accent-950/50 rounded-2xl border border-accent-200 dark:border-accent-800 flex items-start gap-3">
             <AlertCircle className="w-5 h-5 text-accent-600 mt-0.5 flex-shrink-0 dark:text-accent-400" />
             <div>
               <p className="font-medium text-sm text-accent-900 dark:text-accent-200">Se crearán {numSections} secciones</p>
@@ -261,32 +262,32 @@ export default function PromptGenerator({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-6">
           <div>
             <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">🎨 Estilo Visual</label>
-            <select
+            <CustomSelect
               value={style}
-              onChange={(e) => setStyle(e.target.value)}
-              className="w-full px-3 py-2.5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
-            >
-              <option value="cinematic">Cinemático</option>
-              <option value="photorealistic">Fotorrealista</option>
-              <option value="animated">Animado</option>
-              <option value="artistic">Artístico</option>
-              <option value="minimalist">Minimalista</option>
-            </select>
+              onChange={setStyle}
+              options={[
+                { value: 'cinematic', label: 'Cinemático' },
+                { value: 'photorealistic', label: 'Fotorrealista' },
+                { value: 'animated', label: 'Animado' },
+                { value: 'artistic', label: 'Artístico' },
+                { value: 'minimalist', label: 'Minimalista' },
+              ]}
+            />
           </div>
 
           <div>
             <label className="block text-xs font-medium mb-2 text-gray-400 dark:text-zinc-600">🎭 Tono</label>
-            <select
+            <CustomSelect
               value={tone}
-              onChange={(e) => setTone(e.target.value)}
-              className="w-full px-3 py-2.5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none text-sm"
-            >
-              <option value="professional">Profesional</option>
-              <option value="casual">Casual</option>
-              <option value="dramatic">Dramático</option>
-              <option value="educational">Educativo</option>
-              <option value="humorous">Humorístico</option>
-            </select>
+              onChange={setTone}
+              options={[
+                { value: 'professional', label: 'Profesional' },
+                { value: 'casual', label: 'Casual' },
+                { value: 'dramatic', label: 'Dramático' },
+                { value: 'educational', label: 'Educativo' },
+                { value: 'humorous', label: 'Humorístico' },
+              ]}
+            />
           </div>
         </div>
 
@@ -350,7 +351,7 @@ Macro close-up of..."
         <div className="space-y-6">
           <div className="flex items-center justify-between">
             <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium flex items-center gap-3">
-              <div className="p-2.5 bg-accent-600 rounded-lg">
+              <div className="p-3 card-icon">
                 <Sparkles className="w-5 h-5 text-white" />
               </div>
               Prompts Generados ({generatedPrompts.length} secciones)
@@ -499,8 +500,10 @@ Macro close-up of..."
 
       {generatedPrompts.length === 0 && !loading && (
         <div className="card-lg text-center py-12">
-          <Sparkles className="w-12 h-12 text-gray-300 dark:text-zinc-700 mx-auto mb-3" />
-          <p className="text-gray-400 dark:text-zinc-500 text-sm">
+          <div className="empty-state-icon">
+            <Sparkles className="w-6 h-6" />
+          </div>
+          <p className="card-subtitle">
             Genera prompts automáticamente desde tu guion
           </p>
         </div>

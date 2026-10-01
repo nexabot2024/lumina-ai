@@ -308,7 +308,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
   return (
     <div className="space-y-6">
       {/* Timeline Preview */}
-      <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+      <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-gray-900 dark:text-zinc-100 font-medium">Timeline</h3>
           <div className="text-sm text-gray-500 dark:text-zinc-400">
@@ -351,7 +351,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
           {assets.map((asset, index) => (
             <div
               key={asset.id}
-              className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 hover:border-accent-400 dark:hover:border-accent-600 transition"
+              className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-4 hover:border-accent-400 dark:hover:border-accent-600 transition"
             >
               <div className="flex items-center gap-4">
                 {/* Drag Handle */}
@@ -445,7 +445,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
 
       {/* Duration Variation Panel */}
       {assets.length > 0 && (
-        <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+        <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
           <button
             onClick={() => setShowVariationPanel(!showVariationPanel)}
             className="w-full flex items-center justify-between text-gray-900 dark:text-zinc-100 font-medium mb-3 hover:text-accent-600 dark:hover:text-accent-400 transition"
@@ -523,7 +523,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
                           pattern: pattern.value as any,
                         })
                       }
-                      className={`p-2 rounded-lg text-xs font-medium transition ${
+                      className={`p-2 rounded-xl text-xs font-medium transition ${
                         variationConfig.pattern === pattern.value
                           ? 'bg-accent-600 text-white'
                           : 'bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -566,7 +566,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
 
       {/* Transition Effects Panel */}
       {assets.length > 1 && (
-        <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+        <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
           <button
             onClick={() => setShowTransitionPanel(!showTransitionPanel)}
             className="w-full flex items-center justify-between text-gray-900 dark:text-zinc-100 font-medium mb-3 hover:text-accent-600 dark:hover:text-accent-400 transition"
@@ -608,7 +608,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
                           type: trans.value as any,
                         })
                       }
-                      className={`p-2 rounded-lg text-xs font-medium transition ${
+                      className={`p-2 rounded-xl text-xs font-medium transition ${
                         transitionConfig.type === trans.value
                           ? 'bg-accent-600 text-white'
                           : 'bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800'
@@ -672,7 +672,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
 
       {/* Audio Sync Panel */}
       {assets.some(a => a.type === 'audio') && (
-        <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+        <div className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
           <button
             onClick={() => setShowAudioSyncPanel(!showAudioSyncPanel)}
             className="w-full flex items-center justify-between text-gray-900 dark:text-zinc-100 font-medium mb-3 hover:text-accent-600 dark:hover:text-accent-400 transition"
@@ -692,7 +692,7 @@ export default function FFmpegEditor({ assets, onAssetsChange, onCompile }: Prop
 
               {/* Audio Info */}
               {assets.find(a => a.type === 'audio') && (
-                <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 p-3 rounded-lg text-xs text-gray-500 dark:text-zinc-400 space-y-1">
+                <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 p-3 rounded-xl text-xs text-gray-500 dark:text-zinc-400 space-y-1">
                   <p>
                     🎵 Audio detectado:{' '}
                     <span className="font-medium text-gray-900 dark:text-zinc-100">

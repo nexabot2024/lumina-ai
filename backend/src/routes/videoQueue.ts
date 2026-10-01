@@ -24,8 +24,13 @@ const router = Router();
 const uploadDirRel = process.env.UPLOAD_DIR || './uploads';
 const uploadDirAbs = join(process.cwd(), uploadDirRel);
 
+// Además de rutas subidas por el usuario (/uploads/...), acepta resultados de otras
+// herramientas del sistema (/outputs/...) — ej. el rough cut del Editor de Línea de
+// Tiempo pasado directo a esta herramienta.
 function resolveUploadPath(path: string): string {
-  return path.startsWith('/uploads/') ? join(uploadDirAbs, path.replace('/uploads/', '')) : path;
+  if (path.startsWith('/uploads/')) return join(uploadDirAbs, path.replace('/uploads/', ''));
+  if (path.startsWith('/outputs/')) return join(OUTPUT_DIR, decodeURIComponent(path.replace('/outputs/', '')));
+  return path;
 }
 
 type ItemStatus = 'pending' | 'processing' | 'completed' | 'failed';
@@ -39,6 +44,8 @@ interface QueueItem {
   error?: string;
   /** Narración opcional para sincronizar con este video específico. */
   audioPath?: string;
+  insertImagePaths?: string[];
+  animateInsertedImages?: boolean;
 }
 
 interface QueueState {
@@ -51,6 +58,7 @@ interface QueueState {
   events: Array<{ type: string; message: string; percent?: number }>;
   maxClipDuration?: number;
   splitScenes: boolean;
+  fullShuffle: boolean;
   clients: Response[];
 }
 
@@ -110,7 +118,14 @@ async function processQueue(queueId: string) {
     try {
       const outputPath = await reorderVideoOnly(
         q.items[i].path,
-        { maxClipDuration: q.maxClipDuration, splitScenes: q.splitScenes, audioPath: q.items[i].audioPath },
+        {
+          maxClipDuration: q.maxClipDuration,
+          splitScenes: q.splitScenes,
+          fullShuffle: q.fullShuffle,
+          audioPath: q.items[i].audioPath,
+          insertImagePaths: q.items[i].insertImagePaths,
+          animateInsertedImages: q.items[i].animateInsertedImages,
+        },
         (type, message, percent, extra) => addEvent(queueId, type, message, percent, extra)
       );
       q.items[i].status = 'completed';
@@ -175,6 +190,7 @@ function resumeOrphanedQueues() {
       events: [],
       maxClipDuration: orphan.maxClipDuration ?? undefined,
       splitScenes: !!orphan.splitScenes,
+      fullShuffle: !!orphan.fullShuffle,
       clients: [],
     };
     queues.set(orphan.id, queue);
@@ -200,11 +216,47 @@ interface StartQueueBody {
   videos: QueueVideoInput[];
   maxClipDuration?: number;
   splitScenes?: boolean;
+  fullShuffle?: boolean;
+  insertImagePaths?: string[];
+  animateInsertedImages?: boolean;
+  /** Guion opcional: ordena las imágenes por los nombres/personajes mencionados. */
+  narrationScript?: string;
+}
+
+function normalizeWords(value: string): string[] {
+  return value
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(word => word.length >= 3);
+}
+
+/** Mantiene todas las imágenes, pero adelanta las que coinciden con cada tramo del guion. */
+function orderImagesForNarration(imagePaths: string[], narrationScript?: string): string[] {
+  if (!narrationScript?.trim() || imagePaths.length < 2) return imagePaths;
+  const chunks = narrationScript.split(/[.!?\n]+/).map(normalizeWords).filter(words => words.length > 0);
+  if (chunks.length === 0) return imagePaths;
+
+  const remaining = [...imagePaths];
+  const ordered: string[] = [];
+  const targetChunks = Array.from({ length: imagePaths.length }, (_, i) => chunks[Math.min(chunks.length - 1, Math.floor(i * chunks.length / imagePaths.length))]);
+
+  for (const words of targetChunks) {
+    let bestIndex = 0;
+    let bestScore = -1;
+    remaining.forEach((path, index) => {
+      const nameWords = new Set(normalizeWords(basename(path)));
+      const score = words.reduce((total, word) => total + (nameWords.has(word) ? 1 : 0), 0);
+      if (score > bestScore) { bestScore = score; bestIndex = index; }
+    });
+    ordered.push(remaining.splice(bestIndex, 1)[0]);
+  }
+  return ordered;
 }
 
 router.post('/start', async (req: Request<{}, {}, StartQueueBody>, res: Response) => {
   try {
-    const { queueId, videos, maxClipDuration, splitScenes } = req.body;
+    const { queueId, videos, maxClipDuration, splitScenes, fullShuffle, insertImagePaths, narrationScript, animateInsertedImages } = req.body;
 
     if (!videos || videos.length === 0) {
       return res.status(400).json({ error: 'videos es requerido y no puede estar vacío' });
@@ -214,8 +266,12 @@ router.post('/start', async (req: Request<{}, {}, StartQueueBody>, res: Response
       path: resolveUploadPath(v.videoPath),
       audioPath: v.audioPath ? resolveUploadPath(v.audioPath) : undefined,
     }));
+    const resolvedInsertImagePaths = orderImagesForNarration((insertImagePaths || [])
+      .filter((p): p is string => typeof p === 'string' && p.length > 0)
+      .map(resolveUploadPath), narrationScript);
     const missingFiles = resolvedItems
       .flatMap(item => [item.path, item.audioPath])
+      .concat(resolvedInsertImagePaths)
       .filter((p): p is string => !!p && !existsSync(p));
     if (missingFiles.length > 0) {
       return res.status(400).json({ error: `Archivo(s) no encontrado(s): ${missingFiles.join(', ')}` });
@@ -228,6 +284,8 @@ router.post('/start', async (req: Request<{}, {}, StartQueueBody>, res: Response
         name: basename(item.path),
         status: 'pending',
         audioPath: item.audioPath,
+        insertImagePaths: resolvedInsertImagePaths,
+        animateInsertedImages: !!animateInsertedImages,
       })),
       currentIndex: -1,
       currentPercent: 0,
@@ -236,13 +294,14 @@ router.post('/start', async (req: Request<{}, {}, StartQueueBody>, res: Response
       events: [],
       maxClipDuration: maxClipDuration || undefined,
       splitScenes: splitScenes ?? true,
+      fullShuffle: fullShuffle ?? false,
       clients: [],
     };
     queues.set(queueId, queue);
 
     // La columna outputFolder de la BD queda como dato informativo (todo se
     // guarda ahora en OUTPUT_DIR, no en una ruta elegida por el cliente).
-    createQueue(queueId, OUTPUT_DIR, maxClipDuration, splitScenes ?? true);
+    createQueue(queueId, OUTPUT_DIR, maxClipDuration, splitScenes ?? true, fullShuffle ?? false);
     queue.items.forEach((item, idx) => {
       const itemId = `${queueId}-item-${idx}`;
       addQueueItem(queueId, item.path, item.name, itemId);

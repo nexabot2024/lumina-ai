@@ -44,3 +44,6 @@ backend/.db/
 
 # Config local del launcher de vista previa
 .claude/
+
+# Copia local de trabajo para usar con ChatGPT/Codex — no es parte del repo
+para-chatgpt/

@@ -1,8 +1,11 @@
-import { useState } from 'react';
-import { Scissors, Upload, X, Plus, Play, Loader, Activity, Trash2, Wand2, Image as ImageIcon, Film, RotateCcw } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Scissors, Upload, X, Plus, Play, Loader, Activity, Trash2, Wand2, Image as ImageIcon, Film, RotateCcw, PlusCircle, Package } from 'lucide-react';
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import CompilationMonitor from './CompilationMonitor';
+import ProductSegmentsEditor from './ProductSegmentsEditor';
+import CustomSelect from './CustomSelect';
+import ToggleCard from './ToggleCard';
 import { API_URL } from '../services/apiUrl';
 import { useLocalStorageState } from '../hooks/useLocalStorageState';
 
@@ -27,10 +30,22 @@ interface TextOverlayEntry {
 type TransitionType = 'fade' | 'dissolve' | 'wipeleft' | 'wiperight' | 'slideup' | 'slidedown';
 type AnimationType = 'zoomin' | 'zoomout' | 'pan' | 'none';
 
-export default function ClipEditor() {
+interface ClipEditorProps {
+  /** Video ya recibido de otra herramienta (ej. el rough cut del Editor de Línea de Tiempo). */
+  incomingVideo?: { name: string; path: string } | null;
+  onIncomingConsumed?: () => void;
+}
+
+export default function ClipEditor({ incomingVideo, onIncomingConsumed }: ClipEditorProps = {}) {
+  const [mode, setMode] = useState<'normal' | 'porProducto'>('normal');
+
   const [referenceItems, setReferenceItems] = useState<ReferenceItem[]>([]);
   const [audioFile, setAudioFile] = useState<{ name: string; path: string; duration?: number } | null>(null);
   const [musicFile, setMusicFile] = useState<{ name: string; path: string } | null>(null);
+
+  const [wantComplementary, setWantComplementary] = useState(false);
+  const [complementaryItems, setComplementaryItems] = useState<ReferenceItem[]>([]);
+  const [isUploadingComplementary, setIsUploadingComplementary] = useState(false);
 
   const [wantSubtitles, setWantSubtitles] = useState(false);
   const [wantMusic, setWantMusic] = useState(false);
@@ -38,7 +53,8 @@ export default function ClipEditor() {
   const [textOverlays, setTextOverlays] = useState<TextOverlayEntry[]>([]);
 
   const [splitScenes, setSplitScenes] = useState(true);
-  const [allowClipRepeat, setAllowClipRepeat] = useState(true);
+  const [fullShuffle, setFullShuffle] = useState(false);
+  const [allowClipRepeat, setAllowClipRepeat] = useState(false);
   const [wantMaxClipDuration, setWantMaxClipDuration] = useState(false);
   const [maxClipDuration, setMaxClipDuration] = useState(6);
   const [wantTransitions, setWantTransitions] = useState(false);
@@ -55,6 +71,19 @@ export default function ClipEditor() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [showMonitor, setShowMonitor] = useLocalStorageState('lumina-job-clipEditor-monitorOpen', false);
   const [currentJobId, setCurrentJobId] = useLocalStorageState('lumina-job-clipEditor', '');
+
+  const consumedIncomingPath = useRef<string | null>(null);
+  useEffect(() => {
+    if (!incomingVideo || consumedIncomingPath.current === incomingVideo.path) return;
+    consumedIncomingPath.current = incomingVideo.path;
+    setReferenceItems(prev => [
+      ...prev,
+      { id: Math.random().toString(), name: incomingVideo.name, path: incomingVideo.path, type: 'video' },
+    ]);
+    toast.success(`"${incomingVideo.name}" añadido desde el Editor de Línea de Tiempo`);
+    onIncomingConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingVideo]);
 
   const uploadFile = async (file: File): Promise<{ name: string; path: string; duration?: number; type?: string }> => {
     const formData = new FormData();
@@ -96,6 +125,46 @@ export default function ClipEditor() {
       setIsUploading(false);
       e.target.value = '';
     }
+  };
+
+  const handleComplementaryUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const files = Array.from(e.target.files);
+    setIsUploadingComplementary(true);
+    try {
+      for (const file of files) {
+        const uploaded = await uploadFile(file);
+        const isImage = uploaded.type === 'image' || file.type.startsWith('image/');
+        setComplementaryItems(prev => [
+          ...prev,
+          {
+            id: Math.random().toString(),
+            name: uploaded.name,
+            path: uploaded.path,
+            type: isImage ? 'image' : 'video',
+            imageDurationSeconds: isImage ? 5 : undefined,
+          },
+        ]);
+        toast.success(`${file.name} subido`);
+      }
+    } catch (err) {
+      toast.error('Error al subir material complementario');
+    } finally {
+      setIsUploadingComplementary(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleRemoveComplementary = (id: string) => {
+    setComplementaryItems(prev => prev.filter(v => v.id !== id));
+  };
+
+  const handleComplementaryImageDurationChange = (id: string, value: string) => {
+    const seconds = parseFloat(value);
+    const clamped = isNaN(seconds) ? undefined : Math.min(MAX_IMAGE_DURATION, Math.max(1, seconds));
+    setComplementaryItems(prev =>
+      prev.map(v => (v.id === id ? { ...v, imageDurationSeconds: clamped } : v))
+    );
   };
 
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -256,10 +325,20 @@ export default function ClipEditor() {
           ? textOverlays.filter(t => t.text.trim().length > 0).map(t => ({ start: t.start, end: t.end, text: t.text }))
           : [],
         splitScenes,
+        fullShuffle,
         allowClipRepeat,
         transitions: { enabled: wantTransitions, type: transitionType, duration: transitionDuration },
         animations: { enabled: wantAnimations, type: animationType },
         maxClipDuration: wantMaxClipDuration ? maxClipDuration : undefined,
+        ...(wantComplementary && complementaryItems.length > 0
+          ? {
+              complementaryPaths: complementaryItems.map(v => v.path),
+              complementarySourceTypes: complementaryItems.map(v => v.type),
+              complementaryImageDurations: complementaryItems.map(v =>
+                v.type === 'image' ? Math.min(MAX_IMAGE_DURATION, Math.max(1, v.imageDurationSeconds ?? 5)) : undefined
+              ),
+            }
+          : {}),
       });
 
       toast.success('Procesamiento iniciado, revisa el monitor');
@@ -271,15 +350,34 @@ export default function ClipEditor() {
 
   return (
     <div className="space-y-6">
+      <div className="flex gap-2">
+        <button
+          onClick={() => setMode('normal')}
+          className={mode === 'normal' ? 'btn-primary flex-1 py-2 text-sm flex items-center justify-center gap-2' : 'btn-secondary flex-1 py-2 text-sm flex items-center justify-center gap-2'}
+        >
+          <Scissors className="w-4 h-4" /> Normal
+        </button>
+        <button
+          onClick={() => setMode('porProducto')}
+          className={mode === 'porProducto' ? 'btn-primary flex-1 py-2 text-sm flex items-center justify-center gap-2' : 'btn-secondary flex-1 py-2 text-sm flex items-center justify-center gap-2'}
+        >
+          <Package className="w-4 h-4" /> Por producto
+        </button>
+      </div>
+
+      {mode === 'porProducto' ? (
+        <ProductSegmentsEditor />
+      ) : (
+      <>
       <div className="card-lg">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-accent-600 rounded-lg">
+            <div className="p-3 card-icon">
               <Scissors className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Editor de Clips</h2>
-              <p className="text-gray-400 dark:text-zinc-500 text-[10px]">
+              <h2 className="card-title">Editor de Clips</h2>
+              <p className="card-subtitle">
                 Divide videos por escenas, reordénalos automáticamente y sincroniza con audio
               </p>
             </div>
@@ -314,7 +412,7 @@ export default function ClipEditor() {
               {referenceItems.map((item, idx) => (
                 <div
                   key={item.id}
-                  className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-3"
+                  className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl p-3"
                 >
                   {item.type === 'image' ? (
                     <ImageIcon size={16} className="text-accent-500 dark:text-accent-400 shrink-0" />
@@ -378,7 +476,7 @@ export default function ClipEditor() {
         <div className="mb-6">
           <label className="block text-sm font-semibold mb-2">Audio de narración</label>
           {audioFile ? (
-            <div className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-3">
+            <div className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl p-3">
               <span className="flex-1 text-sm text-gray-900 dark:text-zinc-100 truncate">{audioFile.name}</span>
               <button onClick={() => setAudioFile(null)} className="text-gray-500 dark:text-zinc-400 hover:text-red-500">
                 <X size={16} />
@@ -403,7 +501,7 @@ export default function ClipEditor() {
         </div>
 
         {/* Natural-language editing instructions */}
-        <div className="mb-6 p-4 bg-accent-50 dark:bg-accent-950/20 rounded-lg border border-accent-200 dark:border-accent-900/40">
+        <div className="mb-6 p-4 bg-accent-50 dark:bg-accent-950/20 rounded-2xl border border-accent-200 dark:border-accent-900/40">
           <div className="flex items-center gap-2 mb-3">
             <Wand2 className="w-5 h-5 text-accent-600 dark:text-accent-400" />
             <label className="text-sm font-bold text-accent-700 dark:text-accent-200">Indicaciones de edición (lenguaje natural)</label>
@@ -424,7 +522,7 @@ export default function ClipEditor() {
             {isParsingInstructions ? 'Interpretando...' : 'Aplicar con IA'}
           </button>
           {instructionsSummary && (
-            <div className="mt-3 p-3 bg-accent-50 dark:bg-zinc-900/50 border border-accent-200 dark:border-accent-900/40 rounded-lg text-xs font-mono-ui text-accent-800 dark:text-accent-200">
+            <div className="mt-3 p-3 bg-accent-50 dark:bg-zinc-900/50 border border-accent-200 dark:border-accent-900/40 rounded-xl text-xs font-mono-ui text-accent-800 dark:text-accent-200">
               {instructionsSummary}
             </div>
           )}
@@ -432,89 +530,35 @@ export default function ClipEditor() {
 
         {/* Options */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={splitScenes}
-              onChange={(e) => setSplitScenes(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Dividir por escenas</span>
-          </label>
+          <ToggleCard checked={splitScenes} onChange={setSplitScenes} title="Dividir por escenas" />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={allowClipRepeat}
-              onChange={(e) => setAllowClipRepeat(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Repetir clips si hace falta</span>
-          </label>
+          <ToggleCard
+            checked={fullShuffle}
+            onChange={setFullShuffle}
+            disabled={!splitScenes}
+            title="Mezclar por todo el video"
+            description="En vez de solo intercambiar clips vecinos, los mezcla por toda la duración del video — se ve más distinto del original. Ideal para contenido genérico donde no importa la sincronización exacta con la narración."
+          />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantMaxClipDuration}
-              onChange={(e) => setWantMaxClipDuration(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Límite de duración por clip</span>
-          </label>
+          <ToggleCard checked={allowClipRepeat} onChange={setAllowClipRepeat} title="Repetir clips si hace falta" />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantSubtitles}
-              onChange={(e) => setWantSubtitles(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Subtítulos automáticos</span>
-          </label>
+          <ToggleCard checked={wantComplementary} onChange={setWantComplementary} title="Complementar con imágenes/clips" />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantMusic}
-              onChange={(e) => setWantMusic(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Música de fondo</span>
-          </label>
+          <ToggleCard checked={wantMaxClipDuration} onChange={setWantMaxClipDuration} title="Límite de duración por clip" />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantTextOverlays}
-              onChange={(e) => setWantTextOverlays(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Textos en pantalla</span>
-          </label>
+          <ToggleCard checked={wantSubtitles} onChange={setWantSubtitles} title="Subtítulos automáticos" />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantTransitions}
-              onChange={(e) => setWantTransitions(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Transiciones automáticas</span>
-          </label>
+          <ToggleCard checked={wantMusic} onChange={setWantMusic} title="Música de fondo" />
 
-          <label className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={wantAnimations}
-              onChange={(e) => setWantAnimations(e.target.checked)}
-              className="w-5 h-5 accent-accent-600"
-            />
-            <span className="text-sm font-semibold">Animaciones (zoom/paneo)</span>
-          </label>
+          <ToggleCard checked={wantTextOverlays} onChange={setWantTextOverlays} title="Textos en pantalla" />
+
+          <ToggleCard checked={wantTransitions} onChange={setWantTransitions} title="Transiciones automáticas" />
+
+          <ToggleCard checked={wantAnimations} onChange={setWantAnimations} title="Animaciones (zoom/paneo)" />
         </div>
 
         {wantMaxClipDuration && (
-          <div className="mb-6 flex items-center gap-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+          <div className="mb-6 flex items-center gap-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
             <span className="text-xs text-gray-500 dark:text-zinc-400">Duración máxima por clip (segundos):</span>
             <input
               type="number"
@@ -528,21 +572,21 @@ export default function ClipEditor() {
         )}
 
         {wantTransitions && (
-          <div className="mb-6 flex items-center gap-4 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+          <div className="mb-6 flex items-center gap-4 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500 dark:text-zinc-400">Tipo:</span>
-              <select
+              <CustomSelect
                 value={transitionType}
-                onChange={(e) => setTransitionType(e.target.value as TransitionType)}
-                className="px-2 py-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-              >
-                <option value="fade">Fade</option>
-                <option value="dissolve">Disolvencia</option>
-                <option value="wipeleft">Wipe izquierda</option>
-                <option value="wiperight">Wipe derecha</option>
-                <option value="slideup">Deslizar arriba</option>
-                <option value="slidedown">Deslizar abajo</option>
-              </select>
+                onChange={setTransitionType}
+                options={[
+                  { value: 'fade', label: 'Fade' },
+                  { value: 'dissolve', label: 'Disolvencia' },
+                  { value: 'wipeleft', label: 'Wipe izquierda' },
+                  { value: 'wiperight', label: 'Wipe derecha' },
+                  { value: 'slideup', label: 'Deslizar arriba' },
+                  { value: 'slidedown', label: 'Deslizar abajo' },
+                ]}
+              />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-500 dark:text-zinc-400">Duración (s):</span>
@@ -559,24 +603,86 @@ export default function ClipEditor() {
         )}
 
         {wantAnimations && (
-          <div className="mb-6 flex items-center gap-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-4">
+          <div className="mb-6 flex items-center gap-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl p-4">
             <span className="text-xs text-gray-500 dark:text-zinc-400">Tipo de animación:</span>
-            <select
+            <CustomSelect
               value={animationType}
-              onChange={(e) => setAnimationType(e.target.value as AnimationType)}
-              className="px-2 py-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-            >
-              <option value="zoomin">Zoom in</option>
-              <option value="zoomout">Zoom out</option>
-              <option value="pan">Paneo (Ken Burns)</option>
-            </select>
+              onChange={setAnimationType}
+              options={[
+                { value: 'zoomin', label: 'Zoom in' },
+                { value: 'zoomout', label: 'Zoom out' },
+                { value: 'pan', label: 'Paneo (Ken Burns)' },
+              ]}
+            />
+          </div>
+        )}
+
+        {wantComplementary && (
+          <div className="mb-6 p-4 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl">
+            <p className="text-xs text-gray-500 dark:text-zinc-400 mb-3">
+              Si el material principal queda más corto que el audio, se usa primero este contenido (una vez, completo) para llenar el tiempo restante; si aun así sobra audio, ahí sí se completa repitiendo clips.
+            </p>
+            <div className="border border-dashed border-gray-300 dark:border-zinc-700 bg-white dark:bg-zinc-900/50 rounded-xl p-4 text-center hover:border-gray-400 dark:hover:border-zinc-500 transition-colors mb-3">
+              <input
+                type="file"
+                accept="video/*,image/*"
+                multiple
+                onChange={handleComplementaryUpload}
+                className="hidden"
+                id="complementary-input"
+                disabled={isUploadingComplementary}
+              />
+              <label htmlFor="complementary-input" className="cursor-pointer">
+                <PlusCircle className="mx-auto mb-2 text-accent-500 dark:text-accent-400" size={24} />
+                <span className="text-sm text-gray-600 dark:text-zinc-400">
+                  {isUploadingComplementary ? 'Subiendo...' : 'Subir imagen(es)/video(s) complementarios (puedes seleccionar varios)'}
+                </span>
+              </label>
+            </div>
+
+            {complementaryItems.length > 0 && (
+              <div className="space-y-2">
+                {complementaryItems.map((item, idx) => (
+                  <div
+                    key={item.id}
+                    className="flex items-center gap-3 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-xl p-3"
+                  >
+                    {item.type === 'image' ? (
+                      <ImageIcon size={16} className="text-accent-500 dark:text-accent-400 shrink-0" />
+                    ) : (
+                      <Film size={16} className="text-accent-500 dark:text-accent-400 shrink-0" />
+                    )}
+                    <span className="text-xs font-bold text-accent-600 dark:text-accent-400 w-6">{idx + 1}</span>
+                    <span className="flex-1 text-sm text-gray-900 dark:text-zinc-100 truncate">{item.name}</span>
+                    {item.type === 'image' && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500 dark:text-zinc-400">Duración (s, máx. {MAX_IMAGE_DURATION}):</span>
+                        <input
+                          type="number"
+                          min="1"
+                          max={MAX_IMAGE_DURATION}
+                          step="1"
+                          value={item.imageDurationSeconds ?? ''}
+                          onChange={(e) => handleComplementaryImageDurationChange(item.id, e.target.value)}
+                          placeholder="ej. 5"
+                          className="w-16 px-2 py-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-900 dark:text-zinc-100 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
+                        />
+                      </div>
+                    )}
+                    <button onClick={() => handleRemoveComplementary(item.id)} className="text-gray-500 dark:text-zinc-400 hover:text-red-500">
+                      <X size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
         {wantMusic && (
           <div className="mb-6">
             {musicFile ? (
-              <div className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-3">
+              <div className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl p-3">
                 <span className="flex-1 text-sm text-gray-900 dark:text-zinc-100 truncate">{musicFile.name}</span>
                 <button onClick={() => setMusicFile(null)} className="text-gray-500 dark:text-zinc-400 hover:text-red-500">
                   <X size={16} />
@@ -604,7 +710,7 @@ export default function ClipEditor() {
         {wantTextOverlays && (
           <div className="mb-6 space-y-3">
             {textOverlays.map(overlay => (
-              <div key={overlay.id} className="flex items-center gap-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-3">
+              <div key={overlay.id} className="flex items-center gap-2 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-xl p-3">
                 <input
                   type="number"
                   value={overlay.start}
@@ -679,6 +785,8 @@ export default function ClipEditor() {
         statusEndpoint="/api/clip-editing/status"
         title="Monitor de Procesamiento de Clips"
       />
+      </>
+      )}
     </div>
   );
 }

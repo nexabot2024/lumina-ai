@@ -3,10 +3,11 @@ import { History, CheckCircle, AlertCircle, Copy, RefreshCw, Download } from 'lu
 import toast from 'react-hot-toast';
 import axios from 'axios';
 import { API_URL } from '../services/apiUrl';
+import CustomSelect from './CustomSelect';
 
 interface HistoryEntry {
   id: string;
-  source: 'queue' | 'image-sequence' | 'compilation' | 'clip-editing';
+  source: 'queue' | 'image-sequence' | 'compilation' | 'clip-editing' | 'downloader' | 'remotion-composer';
   videoName: string;
   inputPath: string;
   outputPath: string;
@@ -23,6 +24,8 @@ const SOURCE_LABELS: Record<HistoryEntry['source'], string> = {
   'image-sequence': 'Secuencia de Imágenes',
   compilation: 'Editor',
   'clip-editing': 'Editor de Clips',
+  downloader: 'Descargador de Videos',
+  'remotion-composer': 'Composición con Remotion',
 };
 
 function formatDate(ts: number): string {
@@ -73,27 +76,27 @@ export default function HistoryPanel() {
       <div className="card-lg">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-accent-600 rounded-lg">
+            <div className="p-3 card-icon">
               <History className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Historial</h2>
-              <p className="text-gray-400 dark:text-zinc-500 text-[10px]">
+              <h2 className="card-title">Historial</h2>
+              <p className="card-subtitle">
                 Videos generados por todas las herramientas (Cola, Secuencia de Imágenes, Editor, Editor de Clips)
               </p>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <select
-              value={days}
-              onChange={(e) => setDays(parseInt(e.target.value, 10))}
-              className="bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg px-3 py-1.5 text-xs focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-            >
-              <option value={1}>Último día</option>
-              <option value={2}>Últimos 2 días</option>
-              <option value={7}>Última semana</option>
-              <option value={30}>Último mes</option>
-            </select>
+            <CustomSelect
+              value={String(days)}
+              onChange={(v) => setDays(parseInt(v, 10))}
+              options={[
+                { value: '1', label: 'Último día' },
+                { value: '2', label: 'Últimos 2 días' },
+                { value: '7', label: 'Última semana' },
+                { value: '30', label: 'Último mes' },
+              ]}
+            />
             <button
               onClick={load}
               className="p-2 text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
@@ -105,17 +108,33 @@ export default function HistoryPanel() {
         </div>
 
         {isLoading ? (
-          <p className="text-gray-400 dark:text-zinc-600 text-sm text-center py-8">Cargando...</p>
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map(i => (
+              <div key={i} className="flex items-center gap-3 p-3">
+                <div className="skeleton w-4 h-4 rounded-full shrink-0" />
+                <div className="flex-1 space-y-2">
+                  <div className="skeleton h-3.5 w-1/3 rounded" />
+                  <div className="skeleton h-2.5 w-1/2 rounded" />
+                </div>
+              </div>
+            ))}
+          </div>
         ) : entries.length === 0 ? (
-          <p className="text-gray-400 dark:text-zinc-600 text-sm text-center py-8">
-            No hay videos generados en este período
-          </p>
+          <div className="text-center py-10">
+            <div className="empty-state-icon">
+              <History className="w-6 h-6" />
+            </div>
+            <p className="text-gray-500 dark:text-zinc-400 text-sm font-medium">Todavía no hay nada por aquí</p>
+            <p className="text-gray-400 dark:text-zinc-600 text-xs mt-1">
+              Los videos que generes con cualquier herramienta van a aparecer en este período
+            </p>
+          </div>
         ) : (
           <div className="space-y-2">
             {entries.map((entry) => (
               <div
                 key={entry.id}
-                className="flex items-start gap-3 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg p-3"
+                className="flex items-start gap-3 bg-gray-50 dark:bg-zinc-950 rounded-xl p-3 hover:bg-gray-100 dark:hover:bg-zinc-900 transition-colors"
               >
                 {entry.status === 'completed' ? (
                   <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 shrink-0 mt-0.5" />

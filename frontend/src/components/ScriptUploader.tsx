@@ -70,12 +70,12 @@ export default function ScriptUploader({
       {/* Montaje Configuration */}
       <div className="card-lg">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 bg-accent-600 rounded-lg">
+          <div className="p-3 card-icon">
             <Clapperboard className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">🎬 Montaje del Video</h2>
-            <p className="text-gray-400 dark:text-zinc-500 text-[10px]">
+            <h2 className="card-title">🎬 Montaje del Video</h2>
+            <p className="card-subtitle">
               Elige qué proporción de contenido usar al armar el video
             </p>
           </div>
@@ -109,12 +109,12 @@ export default function ScriptUploader({
       {/* Upload Section */}
       <div className="card-lg">
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 bg-accent-600 rounded-lg">
+          <div className="p-3 card-icon">
             <FileUp className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Mi Guion</h2>
-            <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Sube o escribe tu guion aquí</p>
+            <h2 className="card-title">Mi Guion</h2>
+            <p className="card-subtitle">Sube o escribe tu guion aquí</p>
           </div>
         </div>
 
@@ -140,8 +140,8 @@ export default function ScriptUploader({
       <div className="card-lg space-y-4">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">📝 Editor de Guion</h3>
-            <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Edita directamente tu contenido</p>
+            <h3 className="card-title">📝 Editor de Guion</h3>
+            <p className="card-subtitle">Edita directamente tu contenido</p>
           </div>
           <div className="flex gap-2 flex-wrap justify-end">
             <button
@@ -177,11 +177,11 @@ export default function ScriptUploader({
         />
 
         <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100 dark:border-zinc-800">
-          <div className="bg-gray-50 dark:bg-zinc-950 rounded-lg p-3">
+          <div className="bg-gray-50 dark:bg-zinc-950 rounded-xl p-3">
             <p className="text-gray-400 dark:text-zinc-600 text-[10px]">📝 Caracteres</p>
             <p className="text-gray-900 dark:text-zinc-100 text-xl font-medium mt-1">{content.length.toLocaleString()}</p>
           </div>
-          <div className="bg-gray-50 dark:bg-zinc-950 rounded-lg p-3">
+          <div className="bg-gray-50 dark:bg-zinc-950 rounded-xl p-3">
             <p className="text-gray-400 dark:text-zinc-600 text-[10px]">📄 Puntos/Secciones</p>
             <p className="text-gray-900 dark:text-zinc-100 text-xl font-medium mt-1">{(content.match(/\./g) || []).length}</p>
           </div>

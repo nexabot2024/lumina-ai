@@ -111,8 +111,11 @@ export default function PresetsModal({
             </div>
 
             {filteredPresets.length === 0 ? (
-              <div className="text-center py-8 text-gray-500 dark:text-zinc-400">
-                <p>No se encontraron presets</p>
+              <div className="text-center py-8">
+                <div className="empty-state-icon">
+                  <BookOpen className="w-6 h-6" />
+                </div>
+                <p className="text-gray-500 dark:text-zinc-400 text-sm">No se encontraron presets</p>
               </div>
             ) : (
               filteredPresets.map(preset => (

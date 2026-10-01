@@ -25,7 +25,7 @@ export interface QueueItemRecord {
   completedAt?: number;
 }
 
-export type VideoHistorySource = 'queue' | 'image-sequence' | 'compilation' | 'clip-editing';
+export type VideoHistorySource = 'queue' | 'image-sequence' | 'compilation' | 'clip-editing' | 'downloader' | 'remotion-composer';
 
 export interface VideoHistoryRecord {
   id: string;
@@ -103,6 +103,14 @@ export function initializeDatabase() {
       createdAt INTEGER NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS canva_tokens (
+      id TEXT PRIMARY KEY,
+      accessToken TEXT NOT NULL,
+      refreshToken TEXT NOT NULL,
+      expiresAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+
     CREATE INDEX IF NOT EXISTS idx_queue_items_queueId ON queue_items(queueId);
     CREATE INDEX IF NOT EXISTS idx_video_history_createdAt ON video_history(createdAt);
     CREATE INDEX IF NOT EXISTS idx_image_sequence_batches_jobId ON image_sequence_batches(jobId);
@@ -115,19 +123,25 @@ export function initializeDatabase() {
   } catch {
     // La columna ya existe — nada que hacer.
   }
+  try {
+    db.exec(`ALTER TABLE queues ADD COLUMN fullShuffle INTEGER NOT NULL DEFAULT 0`);
+  } catch {
+    // La columna ya existe — nada que hacer.
+  }
 }
 
 export function createQueue(
   queueId: string,
   outputFolder: string,
   maxClipDuration?: number,
-  splitScenes: boolean = false
+  splitScenes: boolean = false,
+  fullShuffle: boolean = false
 ) {
   const stmt = db.prepare(`
-    INSERT INTO queues (id, outputFolder, maxClipDuration, splitScenes, createdAt)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO queues (id, outputFolder, maxClipDuration, splitScenes, fullShuffle, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?)
   `);
-  stmt.run(queueId, outputFolder, maxClipDuration || null, splitScenes ? 1 : 0, Date.now());
+  stmt.run(queueId, outputFolder, maxClipDuration || null, splitScenes ? 1 : 0, fullShuffle ? 1 : 0, Date.now());
 }
 
 export function addQueueItem(
@@ -217,9 +231,10 @@ export function getOrphanedQueues(): Array<{
   outputFolder: string;
   maxClipDuration: number | null;
   splitScenes: number;
+  fullShuffle: number;
 }> {
   const stmt = db.prepare(`
-    SELECT id, outputFolder, maxClipDuration, splitScenes FROM queues WHERE completedAt IS NULL
+    SELECT id, outputFolder, maxClipDuration, splitScenes, fullShuffle FROM queues WHERE completedAt IS NULL
   `);
   return stmt.all() as any;
 }
@@ -312,6 +327,37 @@ export function getIngredients(): IngredientRecord[] {
 export function deleteIngredient(id: string) {
   const stmt = db.prepare(`DELETE FROM ingredients WHERE id = ?`);
   stmt.run(id);
+}
+
+// === Canva: token OAuth de la única cuenta conectada (app de un solo usuario, así
+// que basta una fila fija en vez de una tabla por usuario) ===
+export interface CanvaTokenRecord {
+  id: string;
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+  updatedAt: number;
+}
+
+const CANVA_TOKEN_ID = 'default';
+
+export function saveCanvaToken(accessToken: string, refreshToken: string, expiresAt: number) {
+  const stmt = db.prepare(`
+    INSERT INTO canva_tokens (id, accessToken, refreshToken, expiresAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET accessToken = excluded.accessToken, refreshToken = excluded.refreshToken, expiresAt = excluded.expiresAt, updatedAt = excluded.updatedAt
+  `);
+  stmt.run(CANVA_TOKEN_ID, accessToken, refreshToken, expiresAt, Date.now());
+}
+
+export function getCanvaToken(): CanvaTokenRecord | undefined {
+  const stmt = db.prepare(`SELECT * FROM canva_tokens WHERE id = ?`);
+  return stmt.get(CANVA_TOKEN_ID) as CanvaTokenRecord | undefined;
+}
+
+export function deleteCanvaToken() {
+  const stmt = db.prepare(`DELETE FROM canva_tokens WHERE id = ?`);
+  stmt.run(CANVA_TOKEN_ID);
 }
 
 export { db };

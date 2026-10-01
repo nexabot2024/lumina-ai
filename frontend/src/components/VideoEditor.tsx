@@ -6,6 +6,7 @@ import AssetConfigModal from './AssetConfigModal';
 import FileUploader from './FileUploader';
 import FFmpegEditor from './FFmpegEditor';
 import CompilationMonitor from './CompilationMonitor';
+import CustomSelect from './CustomSelect';
 import { useLocalStorageState } from '../hooks/useLocalStorageState';
 import { API_URL } from '../services/apiUrl';
 
@@ -254,12 +255,12 @@ export default function VideoEditor() {
       <div className="card-lg">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-accent-600 rounded-lg">
+            <div className="p-3 card-icon">
               <Film className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">Editor de Video</h2>
-              <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Ordena y compila tu video final</p>
+              <h2 className="card-title">Editor de Video</h2>
+              <p className="card-subtitle">Ordena y compila tu video final</p>
             </div>
           </div>
           <button
@@ -271,24 +272,19 @@ export default function VideoEditor() {
         </div>
 
         {showSettings && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6 p-4 bg-gray-50 dark:bg-zinc-950 rounded-2xl border border-gray-200 dark:border-zinc-800">
             <div>
               <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">Resolución</label>
-              <select
+              <CustomSelect
                 value={settings.resolution}
-                onChange={(e) =>
-                  setSettings({
-                    ...settings,
-                    resolution: e.target.value as any,
-                  })
-                }
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-              >
-                <option value="720p">720p</option>
-                <option value="1080p">1080p (Recomendado)</option>
-                <option value="2k">2K</option>
-                <option value="4k">4K</option>
-              </select>
+                onChange={(v) => setSettings({ ...settings, resolution: v })}
+                options={[
+                  { value: '720p', label: '720p' },
+                  { value: '1080p', label: '1080p (Recomendado)' },
+                  { value: '2k', label: '2K' },
+                  { value: '4k', label: '4K' },
+                ]}
+              />
             </div>
 
             <div>
@@ -307,39 +303,39 @@ export default function VideoEditor() {
 
             <div>
               <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">Bitrate</label>
-              <select
+              <CustomSelect
                 value={settings.bitrate}
-                onChange={(e) => setSettings({ ...settings, bitrate: e.target.value })}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-              >
-                <option value="3000k">3000k (Bajo)</option>
-                <option value="5000k">5000k (Medio)</option>
-                <option value="8000k">8000k (Alto)</option>
-                <option value="12000k">12000k (Premium)</option>
-              </select>
+                onChange={(v) => setSettings({ ...settings, bitrate: v })}
+                options={[
+                  { value: '3000k', label: '3000k (Bajo)' },
+                  { value: '5000k', label: '5000k (Medio)' },
+                  { value: '8000k', label: '8000k (Alto)' },
+                  { value: '12000k', label: '12000k (Premium)' },
+                ]}
+              />
             </div>
 
             <div>
               <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">Efectos</label>
-              <select
+              <CustomSelect
                 value={settings.effects}
-                onChange={(e) => setSettings({ ...settings, effects: e.target.value as any })}
-                className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 text-gray-700 dark:text-zinc-300 rounded-lg focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-              >
-                <option value="none">Sin efectos</option>
-                <option value="basic">Básicos</option>
-                <option value="advanced">Avanzados</option>
-              </select>
+                onChange={(v) => setSettings({ ...settings, effects: v })}
+                options={[
+                  { value: 'none', label: 'Sin efectos' },
+                  { value: 'basic', label: 'Básicos' },
+                  { value: 'advanced', label: 'Avanzados' },
+                ]}
+              />
             </div>
           </div>
         )}
 
         {/* Automation Settings */}
-        <div className="mb-4 p-4 bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800">
+        <div className="mb-4 p-4 bg-gray-50 dark:bg-zinc-950 rounded-2xl border border-gray-200 dark:border-zinc-800">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-accent-600 dark:text-accent-400" />
-              <label className="text-gray-900 dark:text-zinc-100 text-sm font-medium">⚡ Automatización Inteligente</label>
+              <label className="card-title">⚡ Automatización Inteligente</label>
             </div>
             <div
               role="switch"
@@ -389,23 +385,18 @@ export default function VideoEditor() {
 
               <div>
                 <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">🎬 Tipo de Transición</label>
-                <select
+                <CustomSelect
                   value={automationSettings.transitionType}
-                  onChange={(e) =>
-                    setAutomationSettings({
-                      ...automationSettings,
-                      transitionType: e.target.value as any,
-                    })
-                  }
-                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-                >
-                  <option value="fade">Fade (Desvanecimiento)</option>
-                  <option value="slide">Slide (Deslizamiento)</option>
-                  <option value="dissolve">Dissolve (Disolución)</option>
-                  <option value="wipeLeft">Wipe Left (Barrido Izq)</option>
-                  <option value="wipeRight">Wipe Right (Barrido Der)</option>
-                  <option value="random">🎲 Aleatorio</option>
-                </select>
+                  onChange={(v) => setAutomationSettings({ ...automationSettings, transitionType: v })}
+                  options={[
+                    { value: 'fade', label: 'Fade (Desvanecimiento)' },
+                    { value: 'slide', label: 'Slide (Deslizamiento)' },
+                    { value: 'dissolve', label: 'Dissolve (Disolución)' },
+                    { value: 'wipeLeft', label: 'Wipe Left (Barrido Izq)' },
+                    { value: 'wipeRight', label: 'Wipe Right (Barrido Der)' },
+                    { value: 'random', label: '🎲 Aleatorio' },
+                  ]}
+                />
               </div>
 
               <div>
@@ -428,23 +419,18 @@ export default function VideoEditor() {
 
               <div>
                 <label className="block text-gray-500 dark:text-zinc-400 text-xs font-medium mb-2">✨ Tipo de Animación</label>
-                <select
+                <CustomSelect
                   value={automationSettings.animationType}
-                  onChange={(e) =>
-                    setAutomationSettings({
-                      ...automationSettings,
-                      animationType: e.target.value as any,
-                    })
-                  }
-                  className="w-full px-3 py-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 rounded-lg text-sm text-gray-700 dark:text-zinc-300 focus:border-accent-500 dark:focus:border-accent-600 focus:outline-none"
-                >
-                  <option value="zoom">Zoom (Acercamiento)</option>
-                  <option value="pan">Pan (Panorámica)</option>
-                  <option value="rotate">Rotate (Rotación)</option>
-                  <option value="bounce">Bounce (Rebote)</option>
-                  <option value="slideIn">Slide In (Entrada)</option>
-                  <option value="random">🎲 Aleatorio</option>
-                </select>
+                  onChange={(v) => setAutomationSettings({ ...automationSettings, animationType: v })}
+                  options={[
+                    { value: 'zoom', label: 'Zoom (Acercamiento)' },
+                    { value: 'pan', label: 'Pan (Panorámica)' },
+                    { value: 'rotate', label: 'Rotate (Rotación)' },
+                    { value: 'bounce', label: 'Bounce (Rebote)' },
+                    { value: 'slideIn', label: 'Slide In (Entrada)' },
+                    { value: 'random', label: '🎲 Aleatorio' },
+                  ]}
+                />
               </div>
 
               <div className="md:col-span-2">
@@ -469,11 +455,11 @@ export default function VideoEditor() {
         </div>
 
         {/* Video Structure Settings */}
-        <div className="mb-4 p-4 bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800">
+        <div className="mb-4 p-4 bg-gray-50 dark:bg-zinc-950 rounded-2xl border border-gray-200 dark:border-zinc-800">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Film className="w-4 h-4 text-accent-600 dark:text-accent-400" />
-              <label className="text-gray-900 dark:text-zinc-100 text-sm font-medium">📹 Estructura de Video</label>
+              <label className="card-title">📹 Estructura de Video</label>
             </div>
             <div
               role="switch"
@@ -578,7 +564,7 @@ export default function VideoEditor() {
           )}
 
           {videoPlan && (
-            <div className="mb-4 p-3 bg-accent-50 dark:bg-accent-950/50 rounded-lg border border-accent-200 dark:border-accent-800">
+            <div className="mb-4 p-3 bg-accent-50 dark:bg-accent-950/50 rounded-xl border border-accent-200 dark:border-accent-800">
               <p className="text-accent-700 dark:text-accent-300 text-sm font-medium mb-2">📋 Plan Generado:</p>
               <ul className="text-gray-500 dark:text-zinc-400 text-xs space-y-1">
                 <li>🎬 Videos IA: {videoPlan.structure.assets[0].count} (primeros {Math.round(videoPlan.aiVideoDuration / 60)}min)</li>
@@ -645,7 +631,7 @@ export default function VideoEditor() {
               {assets.map((asset, idx) => (
                 <div
                   key={asset.id}
-                  className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-zinc-950 rounded-lg border border-gray-200 dark:border-zinc-800 hover:border-accent-300 dark:hover:border-accent-700"
+                  className="flex items-center gap-4 p-4 bg-gray-50 dark:bg-zinc-950 rounded-xl border border-gray-200 dark:border-zinc-800 hover:border-accent-300 dark:hover:border-accent-700"
                   draggable
                   onDragOver={(e) => e.preventDefault()}
                 >
@@ -693,12 +679,12 @@ export default function VideoEditor() {
             </div>
 
             {/* Timeline Info */}
-            <div className="flex items-center justify-between p-4 bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-lg">
+            <div className="flex items-center justify-between p-4 bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-2xl">
               <div>
                 <p className="text-emerald-700 dark:text-emerald-400 text-sm font-medium">
                   Duración total: {totalDuration.toFixed(1)}s
                 </p>
-                <p className="text-gray-400 dark:text-zinc-500 text-xs">
+                <p className="card-subtitle">
                   {assets.length} assets • {assets.filter(a => a.type === 'image').length} imágenes •{' '}
                   {assets.filter(a => a.type === 'video').length} videos •{' '}
                   {assets.filter(a => a.type === 'audio').length} audios
@@ -746,12 +732,12 @@ export default function VideoEditor() {
       <div className="card-lg">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-accent-600 rounded-lg">
+            <div className="p-3 card-icon">
               <Zap className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h2 className="text-gray-900 dark:text-zinc-100 text-sm font-medium">⚡ Editor Avanzado FFmpeg</h2>
-              <p className="text-gray-400 dark:text-zinc-500 text-[10px]">Configuración automática y compilación visual</p>
+              <h2 className="card-title">⚡ Editor Avanzado FFmpeg</h2>
+              <p className="card-subtitle">Configuración automática y compilación visual</p>
             </div>
           </div>
         </div>
@@ -760,20 +746,20 @@ export default function VideoEditor() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <button
               onClick={() => setShowAssetConfig(true)}
-              className="p-6 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg hover:border-accent-300 dark:hover:border-accent-700 transition group text-left"
+              className="p-6 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl hover:border-accent-300 dark:hover:border-accent-700 transition group text-left"
             >
               <div className="text-3xl mb-3 group-hover:scale-110 transition">⚙️</div>
               <h3 className="font-medium text-sm text-gray-900 dark:text-zinc-100 mb-2">Configurar Assets</h3>
-              <p className="text-gray-400 dark:text-zinc-500 text-xs">Define cuántos videos stock, videos IA e imágenes necesitas</p>
+              <p className="card-subtitle">Define cuántos videos stock, videos IA e imágenes necesitas</p>
             </button>
 
             <button
               onClick={() => setShowFFmpegEditor(true)}
-              className="p-6 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-lg hover:border-accent-300 dark:hover:border-accent-700 transition group text-left"
+              className="p-6 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-zinc-800 rounded-2xl hover:border-accent-300 dark:hover:border-accent-700 transition group text-left"
             >
               <div className="text-3xl mb-3 group-hover:scale-110 transition">📤</div>
               <h3 className="font-medium text-sm text-gray-900 dark:text-zinc-100 mb-2">Subir Archivos</h3>
-              <p className="text-gray-400 dark:text-zinc-500 text-xs">Sube videos, imágenes y audio para editar y compilar</p>
+              <p className="card-subtitle">Sube videos, imágenes y audio para editar y compilar</p>
             </button>
           </div>
         ) : (

@@ -287,7 +287,8 @@ export interface DownloadOptions {
   theme: string;
   minDuration?: number;
   maxDuration?: number;
-  resolution?: '720p' | '1080p' | '4k';
+  /** 'any' = resolución indistinta, no filtra por altura de video (ver filterVideosByResolution). */
+  resolution?: '720p' | '1080p' | '4k' | 'any';
   quantity?: number;
   sources?: ('pixabay' | 'pexels')[];
 }
@@ -415,8 +416,12 @@ export async function downloadStockVideosAuto(options: DownloadOptions): Promise
     );
     console.log(`📊 Filtros: ${resolution}, ${minDuration}s-${maxDuration}s`);
 
-    // Buscar videos - Aumentar límite a 5x la cantidad solicitada para tener opciones
-    const searchLimit = Math.min(quantity * 5, 300);
+    // Buscar con margen sobre la cantidad pedida (no solo 5x tope 300): con cantidades
+    // grandes (ej. 300) ese tope viejo dejaba el pool de candidatos exactamente igual a
+    // lo pedido, sin margen para lo que se pierde en los filtros de duración/resolución
+    // ni para descargas fallidas — resultando en menos videos de los pedidos. Tope de
+    // 1000 para no golpear la API de forma desproporcionada.
+    const searchLimit = Math.min(Math.max(quantity * 2, quantity + 30), 1000);
     console.log(`🔍 Buscando ${searchLimit} videos...`);
 
     const allVideos = await searchStockVideos([theme], {
@@ -435,8 +440,8 @@ export async function downloadStockVideosAuto(options: DownloadOptions): Promise
     let filteredVideos = filterVideosByDuration(allVideos, minDuration, maxDuration);
     console.log(`⏱️ ${filteredVideos.length} videos después de filtro de duración`);
 
-    // Filtrar por resolución
-    filteredVideos = filterVideosByResolution(filteredVideos, resolution);
+    // Filtrar por resolución — 'any' significa resolución indistinta, no se filtra
+    filteredVideos = filterVideosByResolution(filteredVideos, resolution === 'any' ? undefined : resolution);
     console.log(`📐 ${filteredVideos.length} videos después de filtro de resolución`);
 
     // Tomar la cantidad solicitada

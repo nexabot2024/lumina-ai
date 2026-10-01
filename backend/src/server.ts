@@ -15,7 +15,6 @@ console.log(`[INIT] Loading .env from: ${envPath}`);
 import express from 'express';
 import cors from 'cors';
 import promptRoutes from './routes/prompts.js';
-import imageRoutes from './routes/images.js';
 import audioRoutes from './routes/audio.js';
 import videoRoutes from './routes/videos.js';
 import compilationRoutes from './routes/compilation.js';
@@ -25,7 +24,13 @@ import clipEditingRoutes from './routes/clipEditing.js';
 import videoQueueRoutes from './routes/videoQueue.js';
 import imageSequenceRoutes from './routes/imageSequence.js';
 import historyRoutes from './routes/history.js';
-import ingredientsRoutes from './routes/ingredients.js';
+import downloaderRoutes from './routes/downloader.js';
+import timelineEditorRoutes from './routes/timelineEditor.js';
+import ai84Routes from './routes/ai84.js';
+import canvaRoutes from './routes/canva.js';
+import remotionComposerRoutes from './routes/remotionComposer.js';
+import capcutRoutes from './routes/capcut.js';
+import braveSearchRoutes from './routes/braveSearch.js';
 import { OUTPUT_DIR } from './services/outputStorage.js';
 
 const app = express();
@@ -59,7 +64,6 @@ app.use('/uploads', express.static(join(process.cwd(), process.env.UPLOAD_DIR ||
 app.use('/outputs', express.static(OUTPUT_DIR));
 
 app.use('/api/prompts', promptRoutes);
-app.use('/api/images', imageRoutes);
 app.use('/api/audio', audioRoutes);
 app.use('/api/videos', videoRoutes);
 app.use('/api/compilation', compilationRoutes);
@@ -69,7 +73,13 @@ app.use('/api/clip-editing', clipEditingRoutes);
 app.use('/api/video-queue', videoQueueRoutes);
 app.use('/api/image-sequence', imageSequenceRoutes);
 app.use('/api/history', historyRoutes);
-app.use('/api/ingredients', ingredientsRoutes);
+app.use('/api/downloader', downloaderRoutes);
+app.use('/api/timeline-editor', timelineEditorRoutes);
+app.use('/api/ai84', ai84Routes);
+app.use('/api/canva', canvaRoutes);
+app.use('/api/remotion-composer', remotionComposerRoutes);
+app.use('/api/capcut', capcutRoutes);
+app.use('/api/brave-search', braveSearchRoutes);
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });

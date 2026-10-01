@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Activity, AlertCircle, CheckCircle, Loader, X, Download } from 'lucide-react';
+import { Activity, AlertCircle, CheckCircle, Loader, X, Download, Clock, HardDrive, AlertTriangle } from 'lucide-react';
 import { API_URL } from '../services/apiUrl';
 
 interface CompilationEvent {
@@ -30,9 +30,11 @@ interface Props {
   onClose: () => void;
   statusEndpoint?: string;
   title?: string;
+  /** Se dispara una sola vez, en cuanto el trabajo termina con un resultado descargable. */
+  onComplete?: (outputUrl: string) => void;
 }
 
-export default function CompilationMonitor({ projectId, isOpen, onClose, statusEndpoint = '/api/compilation/status', title = 'Monitor de Compilación' }: Props) {
+export default function CompilationMonitor({ projectId, isOpen, onClose, statusEndpoint = '/api/compilation/status', title = 'Monitor de Compilación', onComplete }: Props) {
   const [state, setCompilationState] = useState<CompilationState>({
     isCompiling: false,
     events: [],
@@ -41,6 +43,7 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
 
   useEffect(() => {
     if (!projectId) return;
+    let notifiedOutputUrl: string | undefined;
 
     const eventSource = new EventSource(
       `${API_URL}${statusEndpoint}/${projectId}`
@@ -58,6 +61,10 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
         outputUrl: data.outputUrl,
         events: (data.events || []).slice(-50).map((ev: any) => ({ ...ev, timestamp: Date.now() })),
       });
+      if (data.outputUrl && data.outputUrl !== notifiedOutputUrl) {
+        notifiedOutputUrl = data.outputUrl;
+        onComplete?.(data.outputUrl);
+      }
     };
 
     eventSource.onerror = () => {
@@ -72,38 +79,76 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
   const errorCount = state.events.filter(e => e.type === 'error').length;
   const warningCount = state.events.filter(e => e.type === 'warning').length;
 
+  const statTiles: { icon: React.ReactNode; label: string; value: string; tone: 'accent' | 'gray' | 'red' | 'amber' }[] = [];
+  if (state.totalDuration) {
+    statTiles.push({ icon: <Clock className="w-3.5 h-3.5" />, label: 'Duración', value: `${(state.totalDuration / 60).toFixed(1)}m`, tone: 'gray' });
+  }
+  if (state.estimatedSize) {
+    statTiles.push({ icon: <HardDrive className="w-3.5 h-3.5" />, label: 'Tamaño est.', value: `${(state.estimatedSize / 1024 / 1024).toFixed(0)}MB`, tone: 'gray' });
+  }
+  if (errorCount > 0) {
+    statTiles.push({ icon: <AlertCircle className="w-3.5 h-3.5" />, label: 'Errores', value: String(errorCount), tone: 'red' });
+  }
+  if (warningCount > 0) {
+    statTiles.push({ icon: <AlertTriangle className="w-3.5 h-3.5" />, label: 'Advertencias', value: String(warningCount), tone: 'amber' });
+  }
+
+  const TILE_TONE: Record<string, string> = {
+    accent: 'bg-accent-50 dark:bg-accent-950/40 text-accent-600 dark:text-accent-400',
+    gray: 'bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400',
+    red: 'bg-red-50 dark:bg-red-950/40 text-red-500 dark:text-red-400',
+    amber: 'bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400',
+  };
+
   return (
-    <div className="fixed right-0 top-0 h-full w-96 bg-white dark:bg-zinc-900 border-l border-gray-200 dark:border-zinc-800 shadow-xl overflow-hidden flex flex-col z-40">
+    <div
+      key={projectId}
+      className="fixed right-0 top-0 h-full w-96 max-w-[92vw] bg-white/95 dark:bg-zinc-950/95 backdrop-blur-xl shadow-2xl shadow-gray-900/15 dark:shadow-black/40 border-l border-gray-100 dark:border-zinc-800/60 rounded-l-3xl overflow-hidden flex flex-col z-[60] animate-panel-in"
+    >
       {/* Header */}
-      <div className="p-4 border-b border-gray-100 dark:border-zinc-800 bg-white dark:bg-zinc-900">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Activity className={`w-5 h-5 ${state.isCompiling ? 'animate-spin text-accent-500 dark:text-accent-400' : 'text-emerald-500 dark:text-emerald-400'}`} />
-            <h3 className="font-medium text-gray-900 dark:text-zinc-100">{title}</h3>
+      <div className="relative p-5 pb-4 shrink-0">
+        <div className="absolute inset-x-0 top-0 h-28 bg-gradient-to-br from-accent-50/80 dark:from-accent-950/25 to-transparent pointer-events-none" />
+
+        <div className="relative flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <span
+              className={`relative w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center text-white shadow-sm bg-gradient-to-br ${
+                state.isCompiling ? 'from-accent-400 to-accent-600 shadow-accent-600/30' : 'from-emerald-400 to-emerald-600 shadow-emerald-600/30'
+              }`}
+            >
+              <span className="absolute inset-x-0 top-0 h-1/2 bg-gradient-to-b from-white/40 to-transparent pointer-events-none" />
+              <Activity className={`relative w-4.5 h-4.5 ${state.isCompiling ? 'animate-spin' : ''}`} />
+            </span>
+            <div>
+              <h3 className="font-semibold text-gray-900 dark:text-zinc-100 text-sm leading-tight">{title}</h3>
+              <p className="text-[11px] text-gray-400 dark:text-zinc-500 mt-0.5">
+                {state.isCompiling ? 'Procesando en tiempo real…' : state.events.length > 0 ? 'Finalizado' : 'En espera'}
+              </p>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="p-1 text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-lg transition-colors"
+            className="p-2 rounded-xl bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
           >
-            <X className="w-5 h-5" />
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Progress Bar */}
         {state.isCompiling && (
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm">
+          <div className="relative space-y-2">
+            <div className="flex justify-between text-xs">
               <span className="text-gray-500 dark:text-zinc-400">Progreso total</span>
               <span className="text-accent-600 dark:text-accent-400 font-semibold">{Math.round(state.currentPercent)}%</span>
             </div>
-            <div className="w-full bg-gray-200 dark:bg-zinc-700 rounded-full h-2 overflow-hidden">
+            <div className="w-full bg-gray-100 dark:bg-zinc-800 rounded-full h-2.5 overflow-hidden">
               <div
-                className="bg-accent-600 h-full transition-all duration-300"
+                className="bg-gradient-to-r from-accent-400 to-accent-600 h-full transition-all duration-300 rounded-full shadow-[0_0_10px_rgb(var(--accent-500)/0.6)]"
                 style={{ width: `${state.currentPercent}%` }}
               />
             </div>
             {state.totalSeconds !== undefined && state.totalSeconds > 0 && (
-              <div className="flex justify-between text-xs text-gray-500 dark:text-zinc-400 pt-1">
+              <div className="flex justify-between text-xs text-gray-500 dark:text-zinc-400 pt-0.5">
                 <span>Minutos editados</span>
                 <span className="text-accent-600 dark:text-accent-400 font-semibold">
                   {formatMinutes(state.currentSeconds || 0)} / {formatMinutes(state.totalSeconds)} min
@@ -115,50 +160,34 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
       </div>
 
       {/* Stats */}
-      {(state.totalDuration || state.estimatedSize) && (
-        <div className="px-4 py-3 bg-gray-50 dark:bg-zinc-950 border-b border-gray-200 dark:border-zinc-800 grid grid-cols-2 gap-2 text-xs">
-          {state.totalDuration && (
-            <div>
-              <div className="text-gray-500 dark:text-zinc-400">Duración</div>
-              <div className="text-gray-900 dark:text-zinc-100 font-semibold">
-                {(state.totalDuration / 60).toFixed(1)}m
+      {statTiles.length > 0 && (
+        <div className="px-5 pb-4 grid grid-cols-2 gap-2 shrink-0">
+          {statTiles.map((tile, idx) => (
+            <div key={idx} className="flex items-center gap-2.5 px-3 py-2.5 bg-gray-50 dark:bg-zinc-900/70 border border-gray-100 dark:border-zinc-800/60 rounded-xl">
+              <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${TILE_TONE[tile.tone]}`}>{tile.icon}</span>
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-wide text-gray-400 dark:text-zinc-500 font-medium truncate">{tile.label}</div>
+                <div className="text-gray-900 dark:text-zinc-100 font-semibold text-sm leading-tight">{tile.value}</div>
               </div>
             </div>
-          )}
-          {state.estimatedSize && (
-            <div>
-              <div className="text-gray-500 dark:text-zinc-400">Tamaño Est.</div>
-              <div className="text-gray-900 dark:text-zinc-100 font-semibold">
-                {(state.estimatedSize / 1024 / 1024).toFixed(0)}MB
-              </div>
-            </div>
-          )}
-          {errorCount > 0 && (
-            <div>
-              <div className="text-red-500 dark:text-red-400">Errores</div>
-              <div className="text-red-600 dark:text-red-500 font-semibold">{errorCount}</div>
-            </div>
-          )}
-          {warningCount > 0 && (
-            <div>
-              <div className="text-amber-600 dark:text-amber-400">Advertencias</div>
-              <div className="text-amber-600 dark:text-amber-500 font-semibold">{warningCount}</div>
-            </div>
-          )}
+          ))}
         </div>
       )}
 
       {/* Events Log */}
-      <div className="flex-1 overflow-y-auto p-3 space-y-2">
+      <div className="flex-1 overflow-y-auto px-4 pb-3 space-y-2">
         {state.events.length === 0 ? (
-          <div className="text-center text-gray-500 dark:text-zinc-400 text-sm py-8">
-            <p>Esperando actualizaciones...</p>
+          <div className="text-center py-10">
+            <div className="empty-state-icon">
+              <Activity className="w-6 h-6" />
+            </div>
+            <p className="text-gray-500 dark:text-zinc-400 text-sm">Esperando actualizaciones...</p>
           </div>
         ) : (
           state.events.map((event, idx) => (
             <div
               key={idx}
-              className={`text-xs p-2 rounded-lg border-l-2 ${
+              className={`text-xs p-2.5 rounded-xl border-l-2 ${
                 event.type === 'error'
                   ? 'bg-red-50 dark:bg-red-950/30 border-red-400 dark:border-red-500 text-red-700 dark:text-red-300'
                   : event.type === 'warning'
@@ -194,25 +223,37 @@ export default function CompilationMonitor({ projectId, isOpen, onClose, statusE
 
       {/* Footer */}
       {!state.isCompiling && state.events.length > 0 && (
-        <div className="bg-white dark:bg-zinc-950 border-t border-gray-100 dark:border-zinc-800 p-3 space-y-2">
+        <div className="shrink-0 bg-gray-50/80 dark:bg-zinc-900/60 border-t border-gray-100 dark:border-zinc-800/60 p-4 space-y-2.5">
           {state.events.some(e => e.type === 'error') ? (
-            <div className="text-red-500 dark:text-red-400 text-xs font-semibold">❌ Compilación fallida</div>
+            <div className="flex items-center gap-1.5 text-red-500 dark:text-red-400 text-xs font-semibold">
+              <AlertCircle className="w-3.5 h-3.5" /> Compilación fallida
+            </div>
           ) : state.outputUrl ? (
             <>
-              <div className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">✅ Compilación completada</div>
+              <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+                <CheckCircle className="w-3.5 h-3.5" /> Compilación completada
+              </div>
               <a
                 href={`${API_URL}${state.outputUrl}`}
                 download
-                className="btn-primary w-full flex items-center justify-center gap-2 py-2 text-sm"
+                className="btn-primary w-full flex items-center justify-center gap-2 py-2.5 text-sm"
               >
                 <Download className="w-4 h-4" /> Descargar video
               </a>
             </>
           ) : state.events.some(e => e.type === 'success') ? (
-            <div className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">✅ Compilación completada</div>
+            <div className="flex items-center gap-1.5 text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+              <CheckCircle className="w-3.5 h-3.5" /> Compilación completada
+            </div>
           ) : (
             <div className="text-gray-500 dark:text-zinc-400 text-xs">Estado desconocido</div>
           )}
+          <button
+            onClick={onClose}
+            className="btn-secondary w-full flex items-center justify-center gap-2 py-2.5 text-sm"
+          >
+            <X className="w-4 h-4" /> Cerrar monitor
+          </button>
         </div>
       )}
     </div>

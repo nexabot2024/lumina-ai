@@ -5,8 +5,10 @@ import { promises as fs } from 'fs';
 import { join } from 'path';
 
 // Configure FFmpeg path if it exists locally
-const ffmpegPath = process.env.FFMPEG_PATH || 'C:\\ffmpeg\\bin\\ffmpeg.exe';
-const ffprobePath = process.env.FFPROBE_PATH || 'C:\\ffmpeg\\bin\\ffprobe.exe';
+// En macOS/Linux FFmpeg se resuelve desde PATH; la ruta explícita de Windows se
+// mantiene para no modificar instalaciones ya configuradas.
+const ffmpegPath = process.env.FFMPEG_PATH || (process.platform === 'win32' ? 'C:\\ffmpeg\\bin\\ffmpeg.exe' : 'ffmpeg');
+const ffprobePath = process.env.FFPROBE_PATH || (process.platform === 'win32' ? 'C:\\ffmpeg\\bin\\ffprobe.exe' : 'ffprobe');
 
 if (existsSync(ffmpegPath)) {
   ffmpeg.setFfmpegPath(ffmpegPath);

@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Toaster } from 'react-hot-toast';
-import { Zap, Sun, Moon, Settings } from 'lucide-react';
+import { Zap, Sun, Moon, Settings, Download } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
+import VideoDownloader from './components/VideoDownloader';
 import SettingsModal from './components/SettingsModal';
 import { useTheme } from './hooks/useTheme';
 import { useSettings } from './hooks/useSettings';
+import { useLocalStorageState } from './hooks/useLocalStorageState';
+
+type View = 'dashboard' | 'downloader';
 
 const AI_ICON_DEFS = `
   <filter id="b"><feGaussianBlur stdDeviation="6" /></filter>
@@ -89,6 +93,62 @@ export default function App() {
   const { theme, toggleTheme } = useTheme();
   const settings = useSettings();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [view, setView] = useLocalStorageState<View>('lumina-active-view', 'dashboard');
+  const [scrollY, setScrollY] = useState(0);
+
+  // Desvanece el texto "Lumina AI" del header a medida que se baja — el logo se queda,
+  // solo el texto se retira. Es un cálculo tan ligero (una resta) que no hace falta
+  // limitarlo con requestAnimationFrame — eso además falla si la pestaña no está
+  // realmente visible/compuesta (rAF se pausa), dejando el efecto roto sin motivo.
+  useEffect(() => {
+    const handleScroll = () => setScrollY(window.scrollY);
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
+  const TITLE_FADE_DISTANCE = 90;
+  const titleOpacity = Math.max(0, 1 - scrollY / TITLE_FADE_DISTANCE);
+
+  // Animación 3D de los botones: un único listener delegado (en vez de tocar cada botón
+  // de cada componente) — cualquier .btn-primary/.btn-secondary/.btn-light de toda la
+  // app se inclina siguiendo el cursor. mouseout (sí burbujea, a diferencia de
+  // mouseleave) resetea la inclinación al salir del botón.
+  useEffect(() => {
+    const BTN_SELECTOR = '.btn-primary, .btn-secondary, .btn-light';
+    const TILT_MAX_DEG = 10;
+
+    const resetTilt = (el: HTMLElement) => {
+      el.style.setProperty('--btn-tilt-x', '0deg');
+      el.style.setProperty('--btn-tilt-y', '0deg');
+    };
+
+    const handleMove = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement)?.closest?.(BTN_SELECTOR) as HTMLElement | null;
+      if (!btn) return;
+      const rect = btn.getBoundingClientRect();
+      const px = (e.clientX - rect.left) / rect.width;
+      const py = (e.clientY - rect.top) / rect.height;
+      const rotateY = (px - 0.5) * TILT_MAX_DEG * 2;
+      const rotateX = (0.5 - py) * TILT_MAX_DEG * 2;
+      btn.style.setProperty('--btn-tilt-x', `${rotateX}deg`);
+      btn.style.setProperty('--btn-tilt-y', `${rotateY}deg`);
+    };
+
+    const handleOut = (e: MouseEvent) => {
+      const btn = (e.target as HTMLElement)?.closest?.(BTN_SELECTOR) as HTMLElement | null;
+      if (!btn) return;
+      const related = e.relatedTarget as Node | null;
+      if (related && btn.contains(related)) return;
+      resetTilt(btn);
+    };
+
+    document.addEventListener('mousemove', handleMove);
+    document.addEventListener('mouseout', handleOut);
+    return () => {
+      document.removeEventListener('mousemove', handleMove);
+      document.removeEventListener('mouseout', handleOut);
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-light relative">
@@ -102,11 +162,24 @@ export default function App() {
         style={{ backgroundImage: `url("${AI_BG_DARK}")`, backgroundSize: '340px 340px', backgroundRepeat: 'repeat' }}
       />
 
-      {/* Header */}
-      <header className="sticky top-0 z-50 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-xl backdrop-saturate-150">
+      {/* Header — el blur va en una capa aparte con máscara de degradado (se desvanece
+          hacia abajo) en vez de cortar en seco contra el patrón de fondo; así se nota
+          el cristal sin dejar una línea dura al hacer scroll. */}
+      <header className="sticky top-0 z-50">
+        <div
+          className="absolute inset-0 -z-10 bg-white/70 dark:bg-zinc-950/70 backdrop-blur-xl backdrop-saturate-150"
+          style={{
+            maskImage: 'linear-gradient(to bottom, black 65%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, black 65%, transparent 100%)',
+          }}
+        />
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
+            <button
+              onClick={() => setView('dashboard')}
+              className="flex items-center gap-4 text-left"
+              aria-label="Ir al inicio"
+            >
               <div className="relative shrink-0 w-14 h-14 rounded-full overflow-hidden">
                 <img
                   src={settings.logoUrl}
@@ -114,26 +187,43 @@ export default function App() {
                   className="w-full h-full object-cover"
                 />
               </div>
-              <h1 className="text-4xl font-black text-gray-900 dark:text-zinc-100 tracking-tight">
-                {settings.systemName}
-              </h1>
-            </div>
+              {!settings.hideSystemName && (
+                <h1
+                  className="text-4xl font-black text-gray-900 dark:text-zinc-100 tracking-tight transition-opacity duration-100"
+                  style={{ opacity: titleOpacity }}
+                >
+                  {settings.systemName}
+                </h1>
+              )}
+            </button>
             <div className="flex items-center gap-3">
               <div className="hidden sm:flex items-center gap-1.5 text-gray-400 dark:text-zinc-600 text-xs">
                 <Zap className="w-3.5 h-3.5 text-yellow-400" fill="currentColor" />
                 <span>Dani S.</span>
               </div>
               <button
+                onClick={() => setView('downloader')}
+                aria-label="Descargador de Videos"
+                title="Descargador de Videos"
+                className={`p-2.5 rounded-xl transition-all active:scale-95 hover:-translate-y-px ${
+                  view === 'downloader'
+                    ? 'bg-accent-200 dark:bg-accent-900 text-accent-800 dark:text-accent-200'
+                    : 'bg-accent-100 dark:bg-accent-900/45 text-accent-700 dark:text-accent-300 hover:bg-accent-200 dark:hover:bg-accent-900/70'
+                }`}
+              >
+                <Download className="w-5 h-5" />
+              </button>
+              <button
                 onClick={() => setSettingsOpen(true)}
                 aria-label="Ajustes"
-                className="p-2.5 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800 active:scale-95 transition-colors"
+                className="p-2.5 rounded-xl bg-accent-100 dark:bg-accent-900/45 text-accent-700 dark:text-accent-300 hover:bg-accent-200 dark:hover:bg-accent-900/70 active:scale-95 hover:-translate-y-px transition-all"
               >
                 <Settings className="w-5 h-5" />
               </button>
               <button
                 onClick={toggleTheme}
                 aria-label="Cambiar tema"
-                className="p-2.5 rounded-lg border border-gray-200 dark:border-zinc-700 bg-gray-50 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800 active:scale-95 transition-colors"
+                className="p-2.5 rounded-xl bg-accent-100 dark:bg-accent-900/45 text-accent-700 dark:text-accent-300 hover:bg-accent-200 dark:hover:bg-accent-900/70 active:scale-95 hover:-translate-y-px transition-all"
               >
                 {theme === 'dark' ? (
                   <Sun className="w-5 h-5" />
@@ -148,7 +238,7 @@ export default function App() {
 
       {/* Main content */}
       <main className="max-w-[90rem] mx-auto px-4 sm:px-6 lg:px-8 py-10">
-        <Dashboard />
+        {view === 'downloader' ? <VideoDownloader /> : <Dashboard />}
       </main>
 
       <SettingsModal
@@ -162,6 +252,18 @@ export default function App() {
         setPaletteKey={settings.setPaletteKey}
         customHue={settings.customHue}
         setCustomHue={settings.setCustomHue}
+        cardStyle={settings.cardStyle}
+        setCardStyle={settings.setCardStyle}
+        fontKey={settings.fontKey}
+        setFontKey={settings.setFontKey}
+        cardBgImage={settings.cardBgImage}
+        setCardBgImage={settings.setCardBgImage}
+        cardBgBlur={settings.cardBgBlur}
+        setCardBgBlur={settings.setCardBgBlur}
+        hideSystemName={settings.hideSystemName}
+        setHideSystemName={settings.setHideSystemName}
+        btn3dGlowHue={settings.btn3dGlowHue}
+        setBtn3dGlowHue={settings.setBtn3dGlowHue}
         resetSettings={settings.resetSettings}
       />
 

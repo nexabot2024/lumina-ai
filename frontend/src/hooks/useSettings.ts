@@ -75,12 +75,51 @@ const DEFAULT_NAME = 'Lumina AI';
 const DEFAULT_LOGO = '/logo.webp';
 export const CUSTOM_PALETTE_KEY = 'custom';
 
+export interface CardStyleDef {
+  key: string;
+  label: string;
+  description: string;
+}
+
+export const CARD_STYLES: CardStyleDef[] = [
+  { key: 'vibrant', label: 'Vibrante', description: 'Forma decorativa degradada + botones con brillo' },
+  { key: 'tinted', label: 'Tintada', description: 'Fondo con el color de acento, sin borde ni sombra' },
+  { key: 'bordered', label: 'Con borde', description: 'Blanco/oscuro plano con borde fino, más sobria' },
+  { key: 'flat', label: 'Plana', description: 'Sin caja visible — solo tipografía y espacio' },
+];
+
+export interface FontDef {
+  key: string;
+  label: string;
+  stack: string;
+}
+
+export const FONTS: FontDef[] = [
+  { key: 'inter', label: 'Inter (por defecto)', stack: "'Inter', ui-sans-serif, system-ui, sans-serif" },
+  { key: 'sora', label: 'Sora', stack: "'Sora', ui-sans-serif, system-ui, sans-serif" },
+  { key: 'space-grotesk', label: 'Space Grotesk', stack: "'Space Grotesk', ui-sans-serif, system-ui, sans-serif" },
+  { key: 'lora', label: 'Lora (serif)', stack: "'Lora', ui-serif, Georgia, serif" },
+];
+
+const DEFAULT_CARD_STYLE = 'vibrant';
+const DEFAULT_FONT = 'inter';
+
 const KEYS = {
   name: 'lumina-settings-name',
   logo: 'lumina-settings-logo',
   palette: 'lumina-settings-palette',
   customHue: 'lumina-settings-custom-hue',
+  cardStyle: 'lumina-settings-card-style',
+  font: 'lumina-settings-font',
+  cardBgImage: 'lumina-settings-card-bg-image',
+  cardBgBlur: 'lumina-settings-card-bg-blur',
+  hideSystemName: 'lumina-settings-hide-system-name',
+  btn3dGlowHue: 'lumina-settings-btn-3d-glow-hue',
 };
+
+const DEFAULT_CARD_BG_BLUR = 0;
+
+const DEFAULT_BTN_3D_GLOW_HUE = 262; // mismo tono que el violeta por defecto del acento
 
 // Saturación/luminosidad por paso, calibrado para parecerse a las escalas de Tailwind
 // (borde pálido = 50, centro oscuro = 950). Usado tanto por la rueda de color como
@@ -129,6 +168,32 @@ export function applyPalette(key: string) {
   });
 }
 
+export function applyCardStyle(key: string) {
+  document.documentElement.setAttribute('data-card-style', key);
+}
+
+export function applyFont(key: string) {
+  const font = FONTS.find(f => f.key === key) || FONTS[0];
+  document.documentElement.style.setProperty('--font-sans', font.stack);
+}
+
+export function applyCardBgImage(dataUrl: string | null) {
+  document.documentElement.style.setProperty('--card-bg-image', dataUrl ? `url(${dataUrl})` : 'none');
+  // Aparte de la variable, marca si hay imagen o no — el CSS solo genera la capa
+  // ::before (imagen + velo) cuando este atributo está puesto; así, sin imagen elegida
+  // (el caso de la enorme mayoría de tarjetas del sistema) no se pinta ninguna capa
+  // extra encima del color de cada tarjeta, evitando el filo doble que dejaba antes.
+  document.documentElement.toggleAttribute('data-card-bg-image', !!dataUrl);
+}
+
+export function applyCardBgBlur(px: number) {
+  document.documentElement.style.setProperty('--card-bg-blur', `${px}px`);
+}
+
+export function applyBtn3dGlow(hue: number) {
+  document.documentElement.style.setProperty('--btn-3d-glow-rgb', hslToRgbString(hue, 85, 55));
+}
+
 export function useSettings() {
   const [systemName, setSystemNameState] = useState(
     () => localStorage.getItem(KEYS.name) || DEFAULT_NAME
@@ -140,6 +205,28 @@ export function useSettings() {
     () => localStorage.getItem(KEYS.palette) || DEFAULT_PALETTE
   );
   const [customHue, setCustomHueState] = useState(getStoredCustomHue);
+  const [cardStyle, setCardStyleState] = useState(
+    () => localStorage.getItem(KEYS.cardStyle) || DEFAULT_CARD_STYLE
+  );
+  const [fontKey, setFontKeyState] = useState(
+    () => localStorage.getItem(KEYS.font) || DEFAULT_FONT
+  );
+  const [cardBgImage, setCardBgImageState] = useState<string | null>(
+    () => localStorage.getItem(KEYS.cardBgImage)
+  );
+  const [cardBgBlur, setCardBgBlurState] = useState(() => {
+    const raw = localStorage.getItem(KEYS.cardBgBlur);
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : DEFAULT_CARD_BG_BLUR;
+  });
+  const [hideSystemName, setHideSystemNameState] = useState(
+    () => localStorage.getItem(KEYS.hideSystemName) === 'true'
+  );
+  const [btn3dGlowHue, setBtn3dGlowHueState] = useState(() => {
+    const raw = localStorage.getItem(KEYS.btn3dGlowHue);
+    const parsed = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(parsed) ? parsed : DEFAULT_BTN_3D_GLOW_HUE;
+  });
 
   useEffect(() => {
     applyPalette(paletteKey);
@@ -148,6 +235,26 @@ export function useSettings() {
   useEffect(() => {
     document.title = systemName;
   }, [systemName]);
+
+  useEffect(() => {
+    applyCardStyle(cardStyle);
+  }, [cardStyle]);
+
+  useEffect(() => {
+    applyFont(fontKey);
+  }, [fontKey]);
+
+  useEffect(() => {
+    applyCardBgImage(cardBgImage);
+  }, [cardBgImage]);
+
+  useEffect(() => {
+    applyCardBgBlur(cardBgBlur);
+  }, [cardBgBlur]);
+
+  useEffect(() => {
+    applyBtn3dGlow(btn3dGlowHue);
+  }, [btn3dGlowHue]);
 
   const setSystemName = (name: string) => {
     const value = name.trim() || DEFAULT_NAME;
@@ -173,15 +280,63 @@ export function useSettings() {
     setPaletteKey(CUSTOM_PALETTE_KEY);
   };
 
+  const setCardStyle = (key: string) => {
+    setCardStyleState(key);
+    localStorage.setItem(KEYS.cardStyle, key);
+  };
+
+  const setFontKey = (key: string) => {
+    setFontKeyState(key);
+    localStorage.setItem(KEYS.font, key);
+  };
+
+  const setCardBgImage = (dataUrl: string | null) => {
+    setCardBgImageState(dataUrl);
+    if (dataUrl) {
+      localStorage.setItem(KEYS.cardBgImage, dataUrl);
+    } else {
+      localStorage.removeItem(KEYS.cardBgImage);
+    }
+  };
+
+  const setCardBgBlur = (px: number) => {
+    const value = Math.max(0, Math.min(20, Math.round(px)));
+    setCardBgBlurState(value);
+    localStorage.setItem(KEYS.cardBgBlur, String(value));
+  };
+
+  const setHideSystemName = (hide: boolean) => {
+    setHideSystemNameState(hide);
+    localStorage.setItem(KEYS.hideSystemName, String(hide));
+  };
+
+  const setBtn3dGlowHue = (hue: number) => {
+    const value = ((Math.round(hue) % 360) + 360) % 360;
+    setBtn3dGlowHueState(value);
+    localStorage.setItem(KEYS.btn3dGlowHue, String(value));
+  };
+
   const resetSettings = () => {
     localStorage.removeItem(KEYS.name);
     localStorage.removeItem(KEYS.logo);
     localStorage.removeItem(KEYS.palette);
     localStorage.removeItem(KEYS.customHue);
+    localStorage.removeItem(KEYS.cardStyle);
+    localStorage.removeItem(KEYS.font);
+    localStorage.removeItem(KEYS.cardBgImage);
+    localStorage.removeItem(KEYS.cardBgBlur);
+    localStorage.removeItem(KEYS.hideSystemName);
+    localStorage.removeItem(KEYS.btn3dGlowHue);
     setSystemNameState(DEFAULT_NAME);
     setLogoUrlState(DEFAULT_LOGO);
     setPaletteKeyState(DEFAULT_PALETTE);
     setCustomHueState(270);
+    setCardStyleState(DEFAULT_CARD_STYLE);
+    setFontKeyState(DEFAULT_FONT);
+    setCardBgImageState(null);
+    setCardBgBlurState(DEFAULT_CARD_BG_BLUR);
+    setHideSystemNameState(false);
+    setBtn3dGlowHueState(DEFAULT_BTN_3D_GLOW_HUE);
   };
 
   return {
@@ -189,6 +344,12 @@ export function useSettings() {
     logoUrl, setLogoUrl,
     paletteKey, setPaletteKey,
     customHue, setCustomHue,
+    cardStyle, setCardStyle,
+    fontKey, setFontKey,
+    cardBgImage, setCardBgImage,
+    cardBgBlur, setCardBgBlur,
+    hideSystemName, setHideSystemName,
+    btn3dGlowHue, setBtn3dGlowHue,
     resetSettings,
   };
 }

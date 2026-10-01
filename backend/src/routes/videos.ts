@@ -7,132 +7,8 @@ import {
   searchPexelsImages,
   downloadStockVideosAuto,
 } from '../services/stockService.js';
-import {
-  generateVideoSnapGen,
-  checkSnapGenVideoStatus,
-  listSnapGenVideoHistory,
-  type SnapGenVideoModel,
-} from '../services/snapgenService.js';
 
 const router = Router();
-
-// ==================== SNAPGEN VIDEO GENERATION ====================
-
-interface GenerateVideoRequest {
-  prompt: string;
-  model?: SnapGenVideoModel;
-  duration?: 4 | 6 | 8 | 10;
-  aspectRatio?: '16:9' | '9:16';
-  resolution?: '720p' | '1080p';
-  referenceImages?: string[];
-}
-
-router.post('/generate-veo', async (req: Request<{}, {}, GenerateVideoRequest>, res: Response) => {
-  try {
-    const { prompt, model, duration, aspectRatio, resolution, referenceImages } = req.body;
-
-    if (!prompt) {
-      return res.status(400).json({ error: 'prompt is required' });
-    }
-
-    const video = await generateVideoSnapGen(prompt, {
-      model,
-      duration,
-      aspectRatio,
-      resolution,
-      referenceImages,
-    });
-
-    res.json({
-      success: true,
-      video,
-      message: 'Video generation started. Check status using taskId.',
-    });
-  } catch (error) {
-    console.error('Error generating video:', error);
-    res.status(500).json({
-      error: 'Failed to generate video',
-      details: (error as Error).message,
-    });
-  }
-});
-
-router.get('/veo/status/:taskId', async (req: Request<{ taskId: string }>, res: Response) => {
-  try {
-    const { taskId } = req.params;
-
-    if (!taskId) {
-      return res.status(400).json({ error: 'taskId is required' });
-    }
-
-    const video = await checkSnapGenVideoStatus(taskId);
-
-    if (!video) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
-
-    res.json({
-      success: true,
-      video,
-    });
-  } catch (error) {
-    console.error('Error checking video status:', error);
-    res.status(500).json({
-      error: 'Failed to check video status',
-      details: (error as Error).message,
-    });
-  }
-});
-
-router.post('/batch-veo', async (req: Request<{}, {}, { prompts: string[] }>, res: Response) => {
-  try {
-    const { prompts } = req.body;
-
-    if (!Array.isArray(prompts) || prompts.length === 0) {
-      return res.status(400).json({ error: 'prompts must be a non-empty array' });
-    }
-
-    // SnapGen solo encola el trabajo y devuelve un taskId de inmediato,
-    // así que se lanzan todos en paralelo y se generan de forma concurrente.
-    const videos = await Promise.all(
-      prompts.map(async (prompt) => {
-        try {
-          return await generateVideoSnapGen(prompt, {});
-        } catch (error) {
-          console.error(`Failed to start video generation for prompt: ${prompt}`, error);
-          return null;
-        }
-      })
-    );
-
-    res.json({
-      success: true,
-      count: videos.filter(Boolean).length,
-      videos,
-    });
-  } catch (error) {
-    console.error('Error starting batch video generation:', error);
-    res.status(500).json({ error: 'Failed to start batch video generation' });
-  }
-});
-
-router.get('/veo/tasks', async (req: Request, res: Response) => {
-  try {
-    const tasks = await listSnapGenVideoHistory();
-
-    res.json({
-      success: true,
-      tasks,
-      count: tasks.length,
-    });
-  } catch (error) {
-    console.error('Error listing active tasks:', error);
-    res.status(500).json({
-      error: 'Failed to list active tasks',
-      details: (error as Error).message,
-    });
-  }
-});
 
 // ==================== STOCK VIDEOS ====================
 
@@ -243,7 +119,7 @@ interface DownloadAutoRequest {
   theme: string;
   minDuration?: number;
   maxDuration?: number;
-  resolution?: '720p' | '1080p' | '4k';
+  resolution?: '720p' | '1080p' | '4k' | 'any';
   quantity?: number;
   sources?: ('pixabay' | 'pexels')[];
 }

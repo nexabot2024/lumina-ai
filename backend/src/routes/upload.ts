@@ -94,6 +94,17 @@ router.post('/', upload.single('file'), async (req: Request, res: Response) => {
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    // Algunos orígenes remotos o descargas interrumpidas llegan al navegador como
+    // un archivo de 0 bytes. Multer puede guardarlo sin error, pero FFmpeg falla más
+    // tarde con "Invalid data found". Se rechaza aquí para que el usuario pueda
+    // volver a descargar/subir el archivo correcto antes de iniciar un render largo.
+    if (req.file.size === 0) {
+      await fs.unlink(req.file.path).catch(() => {});
+      return res.status(400).json({
+        error: 'El archivo está vacío (0 bytes). Vuelve a descargarlo o selecciónalo de nuevo.',
+      });
+    }
+
     const fileType = req.file.mimetype.startsWith('video/')
       ? 'video'
       : req.file.mimetype.startsWith('image/')
@@ -103,6 +114,22 @@ router.post('/', upload.single('file'), async (req: Request, res: Response) => {
     let filename = req.file.filename;
     let fullPath = path.join(uploadDir, filename);
     let originalName = fixFilenameEncoding(req.file.originalname);
+
+    // Verificación de integridad para toda imagen, no solo AVIF/HEIC. `accept`
+    // y el MIME del navegador no garantizan que el contenido sea realmente una imagen.
+    if (fileType === 'image') {
+      try {
+        const metadata = await sharp(fullPath).metadata();
+        if (!metadata.width || !metadata.height) {
+          throw new Error('Imagen sin dimensiones válidas');
+        }
+      } catch (validationError) {
+        await fs.unlink(fullPath).catch(() => {});
+        return res.status(400).json({
+          error: 'La imagen está dañada o no contiene datos de imagen válidos. Descárgala de nuevo e inténtalo otra vez.',
+        });
+      }
+    }
 
     if (fileType === 'image' && FFMPEG_UNFRIENDLY_IMAGE_TYPES.has(req.file.mimetype)) {
       const convertedFilename = `${filename.replace(/\.[^.]+$/, '')}.png`;
