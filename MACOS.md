@@ -53,7 +53,7 @@ Ese script instala las dependencias de `backend/` y `frontend/` la primera vez
 base de datos SQLite usa un módulo nativo que hay que compilar para cada sistema
 operativo) y levanta los dos servidores a la vez.
 
-Abre **http://localhost:5173**.
+Abre **http://localhost:5174**.
 
 ## Alternativa: Docker Desktop
 
